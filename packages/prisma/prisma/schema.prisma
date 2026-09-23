@@ -1,0 +1,112 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Operator{
+  ADD
+  SUBTRACT
+  MULTIPLY
+  DIVIDE
+}
+enum  FriendStatus{
+  ACCEPTED
+  REJECTED
+  PENDING
+}
+
+enum GameStatus{
+  RUNNING
+  ENDED
+  SEARCHING_FOR_PLAYERS
+}
+enum GameMemberStatus{
+  WON
+  LOST
+}
+model User { 
+  id              String      @id @default(uuid()) 
+  email           String      @unique
+  password        String  
+  username        String?
+  gameMembers     GameMember[]
+  rating          UserRating?
+  friendsSent     Friends[]   @relation("sender")
+  friendsReceived Friends[]   @relation("receiver")
+  answers         QuestionAnswer[]
+  
+}
+
+
+model GameMember {
+  id        String        @id @default(uuid()) 
+  user      User          @relation(fields: [userId], references: [id])
+  userId    String
+  game      Game          @relation(fields: [gameId], references: [id])
+  gameId    String
+  status    GameMemberStatus 
+}
+
+
+model Game {
+  id          String        @id @default(uuid())
+  timeLimit   Int
+  startedAt   DateTime      
+  endedAt     DateTime
+  status      GameStatus    @default(SEARCHING_FOR_PLAYERS)
+  gameMember  GameMember[]
+  questions   Question[]
+  answers     QuestionAnswer[]
+}
+
+
+model Question{ 
+  id              String     @id @default(uuid())
+  integer1        Int 
+  integer2        Int 
+  gameId          String
+  game            Game       @relation(fields: [gameId], references: [id])
+  operator        Operator
+  systemAnswer    Int
+  answer          QuestionAnswer[] 
+
+
+}
+
+model QuestionAnswer{
+  id          String     @id @default(uuid())
+  questionId  String
+  question    Question   @relation(fields: [questionId], references: [id])
+  answer      Int 
+  gameId      String
+  game        Game       @relation(fields: [gameId], references: [id])
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+ }
+
+model UserRating{
+  id          String     @id @default(uuid())
+  userId      String     @unique
+  rating      Int        
+  user        User       @relation(fields: [userId], references: [id])
+}
+
+
+model Friends{
+  id           String        @id @default(uuid())
+  senderId     String
+  receiverId   String
+  status       FriendStatus  @default(PENDING)
+  receiver      User        @relation("receiver", fields: [receiverId], references: [id])
+  sender        User        @relation("sender", fields: [senderId], references: [id])
+}
+
