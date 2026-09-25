@@ -1,1392 +1,945 @@
 "use client";
 
-// import { Button } from "@repo/ui/button";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation"
+
+type CellState = "normal" | "correct" | "wrong";
+
 type Question = {
-  id: string | number;
-  question: string;
-  options: string[];
-  answer: string;
-};
-
-type GameStatus =
-  | "IDLE"
-  | "SEARCHING"
-  | "PLAYING"
-  | "FINISHED"
-  | "ERROR";
-
-type AnswerState = "idle" | "correct" | "wrong";
-
-type WsMessage = {
-  type: string;
-  payload?: any;
-};
-
-type Player = {
   id: string;
-  name: string;
+  pattern: string[][];
 };
 
-
-/*
-|--------------------------------------------------------------------------
-| Main Page
-|--------------------------------------------------------------------------
-*/
+type GamePhase =
+  | "LOBBY"
+  | "WAITING"
+  | "INTRO"
+  | "SHOWING"
+  | "PLAYING"
+  | "SUBMITTING"
+  | "COMPLETED";
 
 export default function Home() {
   const wsRef = useRef<WebSocket | null>(null);
 
+  const timerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [connected, setConnected] = useState(false);
-  const router = useRouter()
-  const [status, setStatus] = useState<GameStatus>("IDLE");
 
-  const [error, setError] =
-    useState<string | null>(null);
-
-  const [onlineUsers, setOnlineUsers] =
-    useState<Player[]>([]);
-
-  const [gameId, setGameId] =
-    useState<string | null>(null);
+  const [gameId, setGameId] = useState("");
 
   const [question, setQuestion] =
     useState<Question | null>(null);
 
-  const [selectedAnswer, setSelectedAnswer] =
-    useState<string | null>(null);
+  const [cells, setCells] =
+    useState<CellState[]>([]);
 
-  const [answerState, setAnswerState] =
-    useState<AnswerState>("idle");
+  const [phase, setPhase] =
+    useState<GamePhase>("LOBBY");
 
-  const [score, setScore] =
-    useState(0);
+  const [score, setScore] = useState(0);
 
-  const [totalQuestions, setTotalQuestions] =
-    useState(0);
+  const [questionNumber, setQuestionNumber] =
+    useState(1);
 
-  const [answeredCount, setAnsweredCount] =
-    useState(0);
-
-  const [correctAnswer, setCorrectAnswer] =
-    useState<string | null>(null);
-
+  const [message, setMessage] =
+    useState("Connecting...");
 
   /*
-  |--------------------------------------------------------------------------
-  | WebSocket connection
-  |--------------------------------------------------------------------------
-  */
+   * ==========================================
+   * WEBSOCKET CONNECTION
+   * ==========================================
+   */
 
-useEffect(() => {
-  let cancelled = false;
-  let ws: WebSocket | null = null;
-
-  const connect = () => {
+  useEffect(() => {
     const token = localStorage.getItem("token");
 
     if (!token) {
-      setError("Please login before playing.");
+      setMessage("Please login first");
       return;
     }
 
-    const url = `ws://localhost:8080/?token=${encodeURIComponent(token)}`;
+    const ws = new WebSocket(
+      `ws://localhost:8080?token=${token}`
+    );
 
-    console.log("🔌 Creating WebSocket:", url.replace(token, "***"));
-
-    ws = new WebSocket(url);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      if (cancelled) {
-        alert("canceld the ws close")
-        ws?.close();
-        return;
-      }
+      console.log("WebSocket connected");
 
-      console.log("✅ WebSocket connected");
-      alert("true")
       setConnected(true);
-      setError(null);
+      setMessage("Connected");
     };
 
-    ws.onmessage = (event) => {
-      if (cancelled) return;
-
-      try {
-        const data = JSON.parse(event.data);
-
-        console.log("📩 WebSocket message:", data);
-
-        switch (data.type) {
-          case "ONLINE_USER":
-            setOnlineUsers(data.payload?.users ?? []);
-            break;
-
-          case "SEARCHING_FOR_PLAYER":
-            setGameId(data.payload?.gameId ?? null);
-            setStatus("SEARCHING");
-            break;
-
-          case "GAME_ACCEPTED":
-            setGameId(data.payload?.gameId ?? null);
-            setQuestion(data.payload?.firstQuestion ?? null);
-            setTotalQuestions(data.payload?.totalQuestions ?? 0);
-            setAnsweredCount(0);
-            setSelectedAnswer(null);
-            setAnswerState("idle");
-            setStatus("PLAYING");
-            break;
-
-          case "QUESTION":
-            setQuestion(data.payload?.question ?? null);
-            setSelectedAnswer(null);
-            setAnswerState("idle");
-            setAnsweredCount((prev) => prev + 1);
-            break;
-
-          case "ANSWER_RESULT":
-            setAnswerState(
-              data.payload?.correct ? "correct" : "wrong"
-            );
-
-            setCorrectAnswer(
-              data.payload?.correctAnswer ?? null
-            );
-
-            if (data.payload?.correct) {
-              setScore((prev) => prev + 1);
-            }
-
-            break;
-
-          case "GAME_FINISHED":
-            setStatus("FINISHED");
-            break;
-
-          case "ERROR":
-            console.error(
-              "❌ Server error:",
-              data.payload?.message
-            );
-
-            setError(
-              data.payload?.message ??
-                "Something went wrong."
-            );
-            break;
-
-          default:
-            console.log(
-              "Unknown WebSocket event:",
-              data.type
-            );
-        }
-      } catch (error) {
-        console.error(
-          "❌ Failed to parse WebSocket message:",
-          error
-        );
-      }
-    };
-
-    ws.onerror = (event) => {
-      if (cancelled) return;
-
-      console.error("❌ WebSocket error event:", event);
-
-      setConnected(false);
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      setMessage("WebSocket error");
     };
 
     ws.onclose = (event) => {
-      console.log(
-        "🔌 WebSocket closed:",
-        event.code,
-        event.reason
-      );
-
-      if (cancelled) return;
+      console.log("WebSocket closed");
+      console.log("Close code:", event.code);
+      console.log("Close reason:", event.reason);
+      console.log("Was clean:", event.wasClean);
 
       setConnected(false);
+      setMessage("Disconnected");
     };
-  };
 
-  connect();
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
 
-  return () => {
-    cancelled = true;
+      console.log("SERVER MESSAGE:", data);
 
-    console.log("🧹 Cleaning up WebSocket");
+      /*
+       * ==========================================
+       * FIRST QUESTION
+       * ==========================================
+       */
 
-    if (ws) {
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onerror = null;
-      ws.onclose = null;
+      if (data.type === "QUESTION") {
+        const [questionId, pattern] =
+          data.payload.question;
 
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
-        ws.close();
+        const receivedGameId =
+          data.payload.runningGameId;
+
+        console.log(
+          "First question:",
+          questionId,
+          pattern
+        );
+
+        setGameId(receivedGameId);
+
+        setQuestion({
+          id: questionId,
+          pattern: pattern,
+        });
+
+        setQuestionNumber(1);
+
+        /*
+         * First question starts immediately.
+         * No 1 second intro.
+         */
+
+        startShowingPattern(pattern);
       }
-    }
 
-    if (wsRef.current === ws) {
-      wsRef.current = null;
-    }
-  };
-}, []);
+      /*
+       * ==========================================
+       * NEXT QUESTION
+       * ==========================================
+       */
 
+      if (data.type === "NEXT_QUESTION") {
+        const questionId =
+          data.payload.questionId;
+
+        const pattern =
+          data.payload.question;
+
+        console.log(
+          "Next question:",
+          questionId,
+          pattern
+        );
+
+        /*
+         * Store the new question.
+         */
+
+        setQuestion({
+          id: questionId,
+          pattern: pattern,
+        });
+
+        /*
+         * Increase question number.
+         */
+
+        setQuestionNumber(
+          (previous) => previous + 1
+        );
+
+        /*
+         * IMPORTANT:
+         *
+         * Pass `pattern` directly.
+         *
+         * Don't read question.pattern
+         * inside the timer because React
+         * state updates asynchronously.
+         */
+
+        startQuestionIntro(pattern);
+      }
+
+      /*
+       * ==========================================
+       * GAME COMPLETED
+       * ==========================================
+       */
+
+      if (data.type === "GAME_COMPLETED") {
+        clearGameTimer();
+
+        setPhase("COMPLETED");
+
+        setMessage("Game completed!");
+      }
+
+      /*
+       * ==========================================
+       * ANSWER RESULT
+       * ==========================================
+       */
+
+      if (data.type === "ANSWER_RESULT") {
+        if (data.payload?.correct === false) {
+          setPhase("PLAYING");
+
+          setMessage(
+            "Some boxes were incorrect. Try again."
+          );
+        }
+      }
+    };
+
+    return () => {
+      clearGameTimer();
+      ws.close();
+    };
+  }, []);
 
   /*
-  |--------------------------------------------------------------------------
-  | Start game
-  |--------------------------------------------------------------------------
-  */
+   * ==========================================
+   * CLEAR TIMER
+   * ==========================================
+   */
 
-  const playGame = () => {
+  function clearGameTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  /*
+   * ==========================================
+   * CREATE GAME
+   * ==========================================
+   */
+
+  function createGame() {
     if (!wsRef.current) {
-      setError(
-        "WebSocket is not initialized."
-      );
-
       return;
     }
-
 
     if (
       wsRef.current.readyState !==
       WebSocket.OPEN
     ) {
-      setError(
-        "Game server is not connected."
+      setMessage(
+        "WebSocket is not connected"
       );
-
       return;
     }
 
-
-    setError(null);
-
-    setStatus("SEARCHING");
-
+    console.log("Creating game...");
 
     wsRef.current.send(
       JSON.stringify({
-        type: "PLAY_GAME",
-
+        type: "CREATE",
         payload: {},
       })
     );
-  };
 
+    setPhase("WAITING");
+
+    setMessage(
+      "Waiting for another player..."
+    );
+  }
 
   /*
-  |--------------------------------------------------------------------------
-  | Submit answer
-  |--------------------------------------------------------------------------
-  */
+   * ==========================================
+   * JOIN GAME
+   * ==========================================
+   */
 
-  const submitAnswer = (
-    answer: string
-  ) => {
-    if (!question) return;
-
-    if (!gameId) return;
-
-    /*
-     * Prevent double-clicking.
-     */
-    if (
-      selectedAnswer !== null
-    ) {
+  function joinGame() {
+    if (!wsRef.current) {
       return;
     }
 
-
-    setSelectedAnswer(answer);
-
-
-    /*
-     * Send answer to server.
-     *
-     * IMPORTANT:
-     * We do NOT calculate correctness
-     * here. The server is authoritative.
-     */
     if (
-      wsRef.current?.readyState !==
+      wsRef.current.readyState !==
       WebSocket.OPEN
     ) {
-      setError(
-        "Connection to server lost."
+      setMessage(
+        "WebSocket is not connected"
       );
-
       return;
     }
 
+    console.log("Joining game...");
 
     wsRef.current.send(
       JSON.stringify({
-        type: "SUBMIT_ANSWER",
+        type: "JOIN",
+        payload: {},
+      })
+    );
+
+    setPhase("WAITING");
+
+    setMessage("Joining game...");
+  }
+
+  /*
+   * ==========================================
+   * QUESTION INTRO
+   * ==========================================
+   *
+   * For question 2, 3, 4...
+   *
+   * QUESTION 2
+   *      ↓
+   *   1 second
+   *      ↓
+   * Green pattern
+   *      ↓
+   *   3 seconds
+   *      ↓
+   * Player clicks
+   */
+
+  function startQuestionIntro(
+    pattern: string[][]
+  ) {
+    clearGameTimer();
+
+    setPhase("INTRO");
+
+    setMessage("");
+
+    /*
+     * Show:
+     *
+     * Question 2
+     *
+     * for exactly 1 second.
+     */
+
+    timerRef.current = setTimeout(() => {
+      startShowingPattern(pattern);
+    }, 1000);
+  }
+
+  /*
+   * ==========================================
+   * SHOW PATTERN
+   * ==========================================
+   *
+   * Green ON boxes are shown for 3 seconds.
+   */
+
+  function startShowingPattern(
+    pattern: string[][]
+  ) {
+    clearGameTimer();
+
+    const totalCells =
+      pattern.flat().length;
+
+    /*
+     * Reset all boxes.
+     */
+
+    setCells(
+      Array(totalCells).fill("normal")
+    );
+
+    /*
+     * Show green pattern.
+     */
+
+    setPhase("SHOWING");
+
+    setMessage(
+      "Remember the green boxes"
+    );
+
+    /*
+     * After 3 seconds,
+     * allow player to click.
+     */
+
+    timerRef.current = setTimeout(() => {
+      setPhase("PLAYING");
+
+      setMessage(
+        "Select the boxes you remember"
+      );
+    }, 3000);
+  }
+
+  /*
+   * ==========================================
+   * CLICK BOX
+   * ==========================================
+   */
+
+  function handleCellClick(
+    index: number
+  ) {
+    /*
+     * Player can only click
+     * during PLAYING.
+     */
+
+    if (phase !== "PLAYING") {
+      return;
+    }
+
+    if (!question) {
+      return;
+    }
+
+    /*
+     * Don't allow clicking an already
+     * selected box.
+     */
+
+    if (cells[index] !== "normal") {
+      return;
+    }
+
+    const flattenedPattern =
+      question.pattern.flat();
+
+    const actualValue =
+      flattenedPattern[index];
+
+    /*
+     * ==========================================
+     * CORRECT BOX
+     * ==========================================
+     */
+
+    if (actualValue === "on") {
+      const updatedCells = [...cells];
+
+      updatedCells[index] = "correct";
+
+      setCells(updatedCells);
+
+      setScore(
+        (previous) => previous + 1
+      );
+
+      /*
+       * Count total ON boxes.
+       */
+
+      const totalOn =
+        flattenedPattern.filter(
+          (value) => value === "on"
+        ).length;
+
+      /*
+       * Count correctly selected boxes.
+       */
+
+      const selectedCorrect =
+        updatedCells.filter(
+          (value) => value === "correct"
+        ).length;
+
+      /*
+       * Player found every ON box.
+       */
+
+      if (
+        selectedCorrect === totalOn
+      ) {
+        setPhase("SUBMITTING");
+
+        setMessage(
+          "Perfect! Checking answer..."
+        );
+
+        submitAnswer(updatedCells);
+      }
+
+      return;
+    }
+
+    /*
+     * ==========================================
+     * WRONG BOX
+     * ==========================================
+     */
+
+    const updatedCells = [...cells];
+
+    updatedCells[index] = "wrong";
+
+    setCells(updatedCells);
+
+    setMessage("Wrong box!");
+
+    /*
+     * Red → white after 700ms.
+     */
+
+    setTimeout(() => {
+      setCells((current) => {
+        const updated = [...current];
+
+        if (
+          updated[index] === "wrong"
+        ) {
+          updated[index] = "normal";
+        }
+
+        return updated;
+      });
+
+      /*
+       * Return normal message if
+       * player is still playing.
+       */
+
+      setMessage(
+        "Select the boxes you remember"
+      );
+    }, 700);
+  }
+
+  /*
+   * ==========================================
+   * SUBMIT ANSWER
+   * ==========================================
+   */
+
+  function submitAnswer(
+    selectedCells: CellState[]
+  ) {
+    if (!wsRef.current) {
+      return;
+    }
+
+    if (!question) {
+      return;
+    }
+
+    if (!gameId) {
+      return;
+    }
+
+    /*
+     * Convert:
+     *
+     * correct → on
+     * normal  → off
+     * wrong   → off
+     */
+
+    const answerFlat =
+      selectedCells.map((cell) =>
+        cell === "correct"
+          ? "on"
+          : "off"
+      );
+
+    /*
+     * Convert 1D array back into
+     * the original 2D structure.
+     *
+     * Example:
+     *
+     * [
+     *   "on", "off", "on", "off",
+     *   "off", "on", "off", "on"
+     * ]
+     *
+     * becomes:
+     *
+     * [
+     *   ["on", "off", "on", "off"],
+     *   ["off", "on", "off", "on"]
+     * ]
+     */
+
+    const columns =
+      question.pattern[0].length;
+
+    const answer: string[][] = [];
+
+    for (
+      let i = 0;
+      i < answerFlat.length;
+      i += columns
+    ) {
+      answer.push(
+        answerFlat.slice(
+          i,
+          i + columns
+        )
+      );
+    }
+
+    console.log(
+      "SUBMITTING ANSWER:",
+      {
+        questionId: question.id,
+        gameId: gameId,
+        answer: answer,
+      }
+    );
+
+    wsRef.current.send(
+      JSON.stringify({
+        type: "SUBMIT",
 
         payload: {
-          gameId,
-
           questionId:
             question.id,
 
-          answer,
+          gameId:
+            gameId,
+
+          answer:
+            answer,
         },
       })
     );
-  };
-
-
-  /*
-  |--------------------------------------------------------------------------
-  | Reset game
-  |--------------------------------------------------------------------------
-  */
-
-  const resetGame = () => {
-    setStatus("IDLE");
-
-    setGameId(null);
-
-    setQuestion(null);
-
-    setSelectedAnswer(null);
-
-    setAnswerState("idle");
-
-    setCorrectAnswer(null);
-
-    setScore(0);
-
-    setAnsweredCount(0);
-
-    setTotalQuestions(0);
-
-    setError(null);
-  };
-
+  }
 
   /*
-  |--------------------------------------------------------------------------
-  | Render
-  |--------------------------------------------------------------------------
-  */
+   * ==========================================
+   * CELL COLOR
+   * ==========================================
+   */
+
+  function getCellColor(
+    index: number
+  ) {
+    /*
+     * During the 3 second memory phase,
+     * show ON boxes as green.
+     */
+
+    if (
+      phase === "SHOWING" &&
+      question
+    ) {
+      const value =
+        question.pattern
+          .flat()[index];
+
+      if (value === "on") {
+        return "bg-green-500 animate-pulse";
+      }
+
+      return "bg-white";
+    }
+
+    /*
+     * Normal box.
+     */
+
+    if (
+      cells[index] === "normal"
+    ) {
+      return "bg-white";
+    }
+
+    /*
+     * Correct selected box.
+     */
+
+    if (
+      cells[index] === "correct"
+    ) {
+      return "bg-green-500";
+    }
+
+    /*
+     * Wrong selected box.
+     */
+
+    if (
+      cells[index] === "wrong"
+    ) {
+      return "bg-red-500";
+    }
+
+    return "bg-white";
+  }
+
+  /*
+   * ==========================================
+   * UI
+   * ==========================================
+   */
 
   return (
-    <main className="min-h-screen bg-[#050608] text-white">
+    <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
 
-      <Header
-        connected={connected}
-        onlineUsers={
-          onlineUsers.length
-        }
-      />
+      <div className="w-full max-w-lg">
 
+        {/* ================================= */}
+        {/* LOBBY */}
+        {/* ================================= */}
 
-      {error && (
-        <ErrorBanner
-          message={error}
-          onClose={() =>
-            setError(null)
-          }
-        />
-      )}
+        {phase === "LOBBY" && (
+          <div className="text-center">
 
-
-      {status === "IDLE" && (
-        <Lobby
-          connected={connected}
-          onlineUsers={
-            onlineUsers.length
-          }
-          onPlay={playGame}
-        />
-      )}
-
-
-      {status === "SEARCHING" && (
-        <SearchingScreen
-          onCancel={resetGame}
-        />
-      )}
-
-
-      {status === "PLAYING" &&
-        question && (
-          <GameScreen
-            question={question}
-            score={score}
-            answeredCount={
-              answeredCount
-            }
-            totalQuestions={
-              totalQuestions
-            }
-            selectedAnswer={
-              selectedAnswer
-            }
-            answerState={
-              answerState
-            }
-            correctAnswer={
-              correctAnswer
-            }
-            onAnswer={
-              submitAnswer
-            }
-          />
-        )}
-
-
-      {status === "FINISHED" && (
-        <FinishedScreen
-          score={score}
-          answeredCount={
-            answeredCount
-          }
-          onPlayAgain={
-            resetGame
-          }
-        />
-      )}
-    </main>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Header
-|--------------------------------------------------------------------------
-*/
-
-function Header({
-  connected,
-  onlineUsers,
-}: {
-  connected: boolean;
-  onlineUsers: number;
-}) {
-  return (
-    <header className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/[0.06] bg-[#050608]/80 px-5 backdrop-blur-xl sm:px-8">
-
-      <div className="flex items-center gap-3">
-
-        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/[0.04]">
-
-          <img
-            src="/maatiks.png"
-            alt="Maatiks"
-            className="h-8 w-8 object-contain"
-          />
-
-        </div>
-
-
-        <div>
-          <p className="text-sm font-bold">
-            Maatiks
-          </p>
-
-          <div className="mt-0.5 flex items-center gap-2">
-
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                connected
-                  ? "bg-emerald-400"
-                  : "bg-red-400"
-              }`}
-            />
-
-            <span className="text-[10px] uppercase tracking-widest text-zinc-600">
-              {connected
-                ? "Connected"
-                : "Offline"}
-            </span>
-
-          </div>
-        </div>
-
-      </div>
-
-
-      <div className="flex items-center gap-4">
-
-        <div className="hidden items-center gap-2 sm:flex">
-
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-
-          <span className="text-xs text-zinc-500">
-            {onlineUsers} online
-          </span>
-
-        </div>
-
-
-        <button className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-zinc-400 transition hover:bg-white/[0.06] hover:text-white">
-          Profile
-        </button>
-
-      </div>
-    </header>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Lobby
-|--------------------------------------------------------------------------
-*/
-
-function Lobby({
-  connected,
-  onlineUsers,
-  onPlay,
-}: {
-  connected: boolean;
-  onlineUsers: number;
-  onPlay: () => void;
-}) {
-  return (
-    <section className="relative min-h-[calc(100vh-80px)] overflow-hidden">
-
-      {/* Background */}
-      <div className="pointer-events-none absolute left-1/2 top-[-220px] h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-blue-600/[0.08] blur-[150px]" />
-
-      <div className="pointer-events-none absolute bottom-[-300px] left-[-150px] h-[500px] w-[500px] rounded-full bg-purple-600/[0.05] blur-[150px]" />
-
-
-      <div className="relative mx-auto flex min-h-[calc(100vh-80px)] max-w-6xl items-center px-5 py-16 sm:px-8">
-
-        <div className="grid w-full gap-16 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-
-
-          {/* Left */}
-          <div>
-
-            <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2">
-
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  connected
-                    ? "animate-pulse bg-emerald-400"
-                    : "bg-red-400"
-                }`}
-              />
-
-              <span className="text-xs font-medium text-zinc-400">
-                {connected
-                  ? `${onlineUsers} players online`
-                  : "Connecting to server"}
-              </span>
-
-            </div>
-
-
-            <h1 className="max-w-3xl text-5xl font-black leading-[0.95] tracking-[-0.055em] sm:text-6xl lg:text-7xl">
-
-              Think fast.
-
-              <br />
-
-              <span className="text-blue-400">
-                Play smarter.
-              </span>
-
+            <h1 className="text-5xl font-bold">
+              Memory Grid
             </h1>
 
-
-            <p className="mt-7 max-w-xl text-base leading-7 text-zinc-500 sm:text-lg">
-              Enter a real-time 1v1 knowledge battle.
-              Find an opponent, answer questions,
-              and climb your score one question at a
-              time.
+            <p className="text-gray-400 mt-3">
+              {message}
             </p>
 
-
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <div className="flex flex-col gap-4 max-w-sm mx-auto mt-10">
 
               <button
-                // appName="play-game"
+                onClick={createGame}
                 disabled={!connected}
-                onClick={onPlay}
-                className="h-14 rounded-2xl bg-blue-500 px-8 text-base font-bold text-white shadow-xl shadow-blue-500/10 transition hover:-translate-y-0.5 hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-40"
+                className="
+                  w-full
+                  rounded-xl
+                  bg-white
+                  text-black
+                  py-4
+                  font-semibold
+                  text-lg
+                  hover:bg-gray-200
+                  disabled:opacity-40
+                  disabled:cursor-not-allowed
+                "
               >
-                {connected
-                  ? "Find Opponent  →"
-                  : "Connecting..."}
+                Create Game
               </button>
 
-
-              <button className="h-14 rounded-2xl border border-white/10 bg-white/[0.03] px-8 text-sm font-semibold text-zinc-400 transition hover:bg-white/[0.06] hover:text-white">
-                How it works
+              <button
+                onClick={joinGame}
+                disabled={!connected}
+                className="
+                  w-full
+                  rounded-xl
+                  border
+                  border-white/20
+                  bg-white/5
+                  py-4
+                  font-semibold
+                  text-lg
+                  hover:bg-white/10
+                  disabled:opacity-40
+                  disabled:cursor-not-allowed
+                "
+              >
+                Join Game
               </button>
 
             </div>
 
+          </div>
+        )}
 
-            {/* Stats */}
-            <div className="mt-14 grid max-w-xl grid-cols-3 gap-3">
+        {/* ================================= */}
+        {/* WAITING */}
+        {/* ================================= */}
 
-              <Stat
-                value={`${onlineUsers}`}
-                label="Online"
+        {phase === "WAITING" && (
+          <div className="text-center">
+
+            <h1 className="text-4xl font-bold">
+              Waiting for player
+            </h1>
+
+            <div className="flex justify-center gap-2 mt-8">
+
+              <span
+                className="
+                  w-3
+                  h-3
+                  bg-white
+                  rounded-full
+                  animate-bounce
+                "
               />
 
-              <Stat
-                value="1v1"
-                label="Battle"
+              <span
+                className="
+                  w-3
+                  h-3
+                  bg-white
+                  rounded-full
+                  animate-bounce
+                "
+                style={{
+                  animationDelay: "150ms",
+                }}
               />
 
-              <Stat
-                value="∞"
-                label="Questions"
+              <span
+                className="
+                  w-3
+                  h-3
+                  bg-white
+                  rounded-full
+                  animate-bounce
+                "
+                style={{
+                  animationDelay: "300ms",
+                }}
               />
 
             </div>
 
-          </div>
-
-
-          {/* Right preview */}
-          <GamePreview />
-
-        </div>
-
-      </div>
-    </section>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Game Preview
-|--------------------------------------------------------------------------
-*/
-
-function GamePreview() {
-  return (
-    <div className="relative">
-
-      <div className="absolute inset-0 rounded-[40px] bg-blue-500/[0.08] blur-3xl" />
-
-
-      <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[#0b0e13] p-4 shadow-2xl sm:p-5">
-
-        {/* Browser header */}
-        <div className="mb-5 flex items-center justify-between">
-
-          <div className="flex gap-1.5">
-
-            <span className="h-2 w-2 rounded-full bg-red-400/70" />
-
-            <span className="h-2 w-2 rounded-full bg-yellow-400/70" />
-
-            <span className="h-2 w-2 rounded-full bg-green-400/70" />
+            <p className="text-gray-400 mt-6">
+              {message}
+            </p>
 
           </div>
+        )}
 
-          <span className="text-[9px] font-semibold uppercase tracking-[0.25em] text-zinc-600">
-            LIVE MATCH
-          </span>
+        {/* ================================= */}
+        {/* QUESTION INTRO */}
+        {/* ================================= */}
 
-        </div>
+        {phase === "INTRO" && (
+          <div className="min-h-[400px] flex items-center justify-center">
 
+            <div className="text-center">
 
-        <div className="rounded-2xl border border-white/10 bg-[#07090d] p-5 sm:p-6">
+              <p className="text-gray-400 text-lg">
+                Get ready
+              </p>
 
-          <div className="flex items-center justify-between">
+              <h1 className="text-6xl font-bold mt-3">
+                Question {questionNumber}
+              </h1>
 
-            <span className="text-xs text-zinc-600">
-              QUESTION 03
-            </span>
-
-            <span className="rounded-full bg-blue-400/10 px-3 py-1 text-[10px] font-bold text-blue-400">
-              240 PTS
-            </span>
+            </div>
 
           </div>
+        )}
 
+        {/* ================================= */}
+        {/* GAME */}
+        {/* ================================= */}
 
-          <h3 className="mt-6 text-xl font-bold leading-8">
-            Which technology enables
-            real-time communication
-            between clients and servers?
-          </h3>
+        {(
+          phase === "SHOWING" ||
+          phase === "PLAYING" ||
+          phase === "SUBMITTING"
+        ) && (
+          <div>
 
+            {/* HEADER */}
 
-          <div className="mt-7 space-y-2">
+            <div className="flex justify-between items-center mb-8">
 
-            {[
-              "HTTP",
-              "WebSockets",
-              "REST",
-              "GraphQL",
-            ].map((answer, index) => (
+              <div>
+                <p className="text-gray-500 text-sm">
+                  QUESTION
+                </p>
 
-              <div
-                key={answer}
-                className={`flex items-center gap-3 rounded-xl border p-3 ${
-                  index === 1
-                    ? "border-blue-400/30 bg-blue-400/[0.08]"
-                    : "border-white/5 bg-white/[0.02]"
-                }`}
-              >
-
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04] text-[11px] font-bold text-zinc-500">
-                  {String.fromCharCode(
-                    65 + index
-                  )}
-                </span>
-
-                <span className="text-xs font-medium text-zinc-300">
-                  {answer}
-                </span>
-
-                {index === 1 && (
-                  <span className="ml-auto text-blue-400">
-                    ✓
-                  </span>
-                )}
-
+                <p className="text-2xl font-bold">
+                  {questionNumber}
+                </p>
               </div>
-            ))}
 
-          </div>
+              <div className="text-right">
+                <p className="text-gray-500 text-sm">
+                  SCORE
+                </p>
 
-        </div>
+                <p className="text-2xl font-bold">
+                  {score}
+                </p>
+              </div>
 
-
-        <div className="mt-4 flex items-center justify-between rounded-2xl border border-white/5 bg-white/[0.02] p-4">
-
-          <div className="flex -space-x-2">
-
-            <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#0b0e13] bg-blue-500 text-xs font-bold">
-              A
             </div>
 
-            <div className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#0b0e13] bg-purple-500 text-xs font-bold">
-              B
+            {/* MESSAGE */}
+
+            <div className="text-center mb-8">
+
+              <p className="text-gray-400">
+                {message}
+              </p>
+
             </div>
 
-          </div>
+            {/* GRID */}
 
-          <div className="text-right">
+            <div className="grid grid-cols-5 gap-3 max-w-md mx-auto">
 
-            <p className="text-xs font-medium text-zinc-300">
-              Multiplayer
-            </p>
-
-            <p className="text-[10px] text-zinc-600">
-              Real-time battle
-            </p>
-
-          </div>
-
-        </div>
-
-      </div>
-    </div>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Searching Screen
-|--------------------------------------------------------------------------
-*/
-
-function SearchingScreen({
-  onCancel,
-}: {
-  onCancel: () => void;
-}) {
-  return (
-    <section className="flex min-h-[calc(100vh-80px)] items-center justify-center px-5">
-
-      <div className="relative w-full max-w-md overflow-hidden rounded-[32px] border border-white/10 bg-[#0b0e13] p-10 text-center shadow-2xl">
-
-        <div className="absolute left-1/2 top-[-80px] h-40 w-40 -translate-x-1/2 rounded-full bg-blue-500/20 blur-[80px]" />
-
-
-        <div className="relative">
-
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-blue-400/20 bg-blue-400/[0.06]">
-
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-400/20 border-t-blue-400" />
-
-          </div>
-
-
-          <p className="mt-8 text-xs font-bold uppercase tracking-[0.25em] text-blue-400">
-            Matchmaking
-          </p>
-
-
-          <h1 className="mt-3 text-3xl font-bold tracking-tight">
-            Finding opponent
-          </h1>
-
-
-          <p className="mt-4 text-sm leading-6 text-zinc-500">
-            Searching for another player.
-            Your game will start automatically
-            when someone joins.
-          </p>
-
-
-          <div className="mt-8 flex justify-center gap-2">
-
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400" />
-
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400 [animation-delay:150ms]" />
-
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400 [animation-delay:300ms]" />
-
-          </div>
-
-
-          <button
-            onClick={onCancel}
-            className="mt-9 text-sm text-zinc-600 transition hover:text-white"
-          >
-            Cancel matchmaking
-          </button>
-
-        </div>
-      </div>
-    </section>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Game Screen
-|--------------------------------------------------------------------------
-*/
-
-function GameScreen({
-  question,
-  score,
-  answeredCount,
-  totalQuestions,
-  selectedAnswer,
-  answerState,
-  correctAnswer,
-  onAnswer,
-}: {
-  question: Question;
-  score: number;
-  answeredCount: number;
-  totalQuestions: number;
-  selectedAnswer: string | null;
-  answerState: AnswerState;
-  correctAnswer: string | null;
-  onAnswer: (
-    answer: string
-  ) => void;
-}) {
-  const currentNumber =
-    answeredCount + 1;
-
-
-  return (
-    <section className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8">
-
-
-      {/* Top */}
-      <div className="mb-8 flex items-center justify-between">
-
-        <div>
-
-          <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-blue-400">
-            Live Battle
-          </p>
-
-          <h1 className="mt-1 text-xl font-bold">
-            Knowledge Arena
-          </h1>
-
-        </div>
-
-
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3 text-right">
-
-          <p className="text-[9px] uppercase tracking-widest text-zinc-600">
-            Score
-          </p>
-
-          <p className="mt-0.5 text-xl font-black text-blue-400">
-            {score}
-          </p>
-
-        </div>
-
-      </div>
-
-
-      {/* Progress */}
-      <div className="mb-8">
-
-        <div className="mb-2 flex justify-between text-[10px] text-zinc-600">
-
-          <span>
-            Question {currentNumber}
-            {totalQuestions > 0
-              ? ` / ${totalQuestions}`
-              : ""}
-          </span>
-
-          <span>
-            {score} correct
-          </span>
-
-        </div>
-
-
-        <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
-
-          <div
-            className="h-full rounded-full bg-blue-500 transition-all duration-500"
-            style={{
-              width:
-                totalQuestions > 0
-                  ? `${Math.min(
-                      (currentNumber /
-                        totalQuestions) *
-                        100,
-                      100
-                    )}%`
-                  : "15%",
-            }}
-          />
-
-        </div>
-
-      </div>
-
-
-      {/* Question card */}
-      <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[#0b0e13] p-6 shadow-2xl sm:p-10">
-
-        <div className="pointer-events-none absolute right-[-100px] top-[-100px] h-72 w-72 rounded-full bg-blue-500/[0.07] blur-[100px]" />
-
-
-        <div className="relative">
-
-          <div className="flex items-center justify-between">
-
-            <span className="rounded-full border border-blue-400/20 bg-blue-400/[0.08] px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-blue-400">
-              Question
-            </span>
-
-
-            <span className="text-xs text-zinc-600">
-              Select one answer
-            </span>
-
-          </div>
-
-
-          <h2 className="mt-8 max-w-3xl text-2xl font-bold leading-tight tracking-tight sm:text-4xl sm:leading-[1.2]">
-            {question.question}
-          </h2>
-
-
-          {/* Answers */}
-          <div className="mt-10 grid gap-3 sm:grid-cols-2">
-
-            { question?.options?.map(
-              (
-                option,
-                index
-              ) => {
-
-                const isSelected =
-                  selectedAnswer ===
-                  option;
-
-                const isCorrect =
-                  answerState ===
-                    "correct" &&
-                  isSelected;
-
-                const isWrong =
-                  answerState ===
-                    "wrong" &&
-                  isSelected;
-
-                const isCorrectAnswer =
-                  answerState ===
-                    "wrong" &&
-                  correctAnswer ===
-                    option;
-
-
-                return (
+              {cells.map(
+                (state, index) => (
                   <button
-                    key={option}
-                    disabled={
-                      selectedAnswer !==
-                      null
-                    }
+                    key={index}
                     onClick={() =>
-                      onAnswer(
-                        option
-                      )
+                      handleCellClick(index)
+                    }
+                    disabled={
+                      phase !== "PLAYING"
                     }
                     className={`
-                      group flex min-h-[78px]
-                      items-center gap-4
-                      rounded-2xl border p-4
-                      text-left
-                      transition-all duration-200
-
+                      aspect-square
+                      rounded-xl
+                      transition-all
+                      duration-200
+                      ${getCellColor(index)}
                       ${
-                        isCorrect
-                          ? "border-emerald-400/40 bg-emerald-400/[0.08]"
-                          : ""
-                      }
-
-                      ${
-                        isWrong
-                          ? "border-red-400/40 bg-red-400/[0.08]"
-                          : ""
-                      }
-
-                      ${
-                        isCorrectAnswer
-                          ? "border-emerald-400/40 bg-emerald-400/[0.06]"
-                          : ""
-                      }
-
-                      ${
-                        !isSelected &&
-                        !isCorrectAnswer
-                          ? "border-white/10 bg-white/[0.025] hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-blue-400/[0.05]"
-                          : ""
-                      }
-
-                      ${
-                        selectedAnswer &&
-                        !isSelected &&
-                        !isCorrectAnswer
-                          ? "opacity-40"
-                          : ""
+                        phase === "PLAYING"
+                          ? "cursor-pointer hover:scale-105"
+                          : "cursor-default"
                       }
                     `}
-                  >
-
-                    <span
-                      className={`
-                        flex h-10 w-10
-                        shrink-0 items-center
-                        justify-center
-                        rounded-xl border
-                        text-sm font-bold
-
-                        ${
-                          isCorrect
-                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-400"
-                            : ""
-                        }
-
-                        ${
-                          isWrong
-                            ? "border-red-400/30 bg-red-400/10 text-red-400"
-                            : ""
-                        }
-
-                        ${
-                          isCorrectAnswer
-                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-400"
-                            : ""
-                        }
-
-                        ${
-                          !isSelected &&
-                          !isCorrectAnswer
-                            ? "border-white/10 bg-white/[0.04] text-zinc-500"
-                            : ""
-                        }
-                      `}
-                    >
-                      {String.fromCharCode(
-                        65 + index
-                      )}
-                    </span>
-
-
-                    <span className="text-sm font-medium text-zinc-200 sm:text-base">
-                      {option}
-                    </span>
-
-
-                    {isCorrect && (
-                      <span className="ml-auto text-lg text-emerald-400">
-                        ✓
-                      </span>
-                    )}
-
-
-                    {isWrong && (
-                      <span className="ml-auto text-lg text-red-400">
-                        ×
-                      </span>
-                    )}
-
-
-                    {isCorrectAnswer && (
-                      <span className="ml-auto text-xs font-semibold text-emerald-400">
-                        Correct
-                      </span>
-                    )}
-
-                  </button>
-                );
-              }
-            )}
-
-          </div>
-
-
-          {/* Feedback */}
-          {answerState !==
-            "idle" && (
-            <div
-              className={`
-                mt-6 rounded-2xl
-                border px-5 py-4
-
-                ${
-                  answerState ===
-                  "correct"
-                    ? "border-emerald-400/20 bg-emerald-400/[0.05]"
-                    : "border-red-400/20 bg-red-400/[0.05]"
-                }
-              `}
-            >
-
-              <p
-                className={`text-sm font-semibold ${
-                  answerState ===
-                  "correct"
-                    ? "text-emerald-400"
-                    : "text-red-400"
-                }`}
-              >
-                {answerState ===
-                "correct"
-                  ? "Correct answer!"
-                  : "Not quite!"}
-              </p>
-
-
-              <p className="mt-1 text-xs text-zinc-500">
-                {answerState ===
-                "correct"
-                  ? "Preparing the next question..."
-                  : `The correct answer is ${correctAnswer}.`}
-              </p>
-
-            </div>
-          )}
-
-        </div>
-      </div>
-
-
-      {/* Bottom info */}
-      <div className="mt-5 flex items-center justify-center">
-
-        <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-700">
-          Real-time multiplayer
-        </p>
-
-      </div>
-
-    </section>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Finished
-|--------------------------------------------------------------------------
-*/
-
-function FinishedScreen({
-  score,
-  answeredCount,
-  onPlayAgain,
-}: {
-  score: number;
-  answeredCount: number;
-  onPlayAgain: () => void;
-}) {
-  return (
-    <section className="flex min-h-[calc(100vh-80px)] items-center justify-center px-5">
-
-      <div className="relative w-full max-w-md overflow-hidden rounded-[32px] border border-white/10 bg-[#0b0e13] p-8 text-center shadow-2xl sm:p-10">
-
-        <div className="pointer-events-none absolute left-1/2 top-[-100px] h-56 w-56 -translate-x-1/2 rounded-full bg-blue-500/20 blur-[100px]" />
-
-
-        <div className="relative">
-
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-blue-400/20 bg-blue-400/[0.08] text-3xl">
-            🏆
-          </div>
-
-
-          <p className="mt-8 text-[10px] font-bold uppercase tracking-[0.3em] text-blue-400">
-            Match Complete
-          </p>
-
-
-          <h1 className="mt-3 text-4xl font-black tracking-tight">
-            Game Over
-          </h1>
-
-
-          <p className="mt-3 text-sm text-zinc-500">
-            Nice game. Here&apos;s your
-            result.
-          </p>
-
-
-          <div className="my-8 grid grid-cols-2 gap-3">
-
-            <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
-
-              <p className="text-[9px] uppercase tracking-widest text-zinc-600">
-                Score
-              </p>
-
-              <p className="mt-2 text-4xl font-black text-blue-400">
-                {score}
-              </p>
-
-            </div>
-
-
-            <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
-
-              <p className="text-[9px] uppercase tracking-widest text-zinc-600">
-                Answered
-              </p>
-
-              <p className="mt-2 text-4xl font-black">
-                {answeredCount}
-              </p>
+                  />
+                )
+              )}
 
             </div>
 
           </div>
+        )}
 
+        {/* ================================= */}
+        {/* COMPLETED */}
+        {/* ================================= */}
 
-          <button
-            onClick={onPlayAgain}
-            className="h-14 w-full rounded-2xl bg-blue-500 font-bold text-white transition hover:bg-blue-400"
-          >
-            Play Again →
-          </button>
+        {phase === "COMPLETED" && (
+          <div className="text-center">
 
-        </div>
-      </div>
-    </section>
-  );
-}
+            <p className="text-gray-400">
+              Game completed
+            </p>
 
+            <h1 className="text-6xl font-bold mt-4">
+              {score}
+            </h1>
 
-/*
-|--------------------------------------------------------------------------
-| Error Banner
-|--------------------------------------------------------------------------
-*/
+            <p className="text-gray-400 mt-2">
+              Final Score
+            </p>
 
-function ErrorBanner({
-  message,
-  onClose,
-}: {
-  message: string;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed left-1/2 top-24 z-[100] w-[calc(100%-32px)] max-w-lg -translate-x-1/2">
-
-      <div className="flex items-start gap-3 rounded-2xl border border-red-400/20 bg-[#12090b]/95 p-4 shadow-2xl backdrop-blur-xl">
-
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-400/10 text-sm text-red-400">
-          !
-        </div>
-
-
-        <div className="flex-1">
-
-          <p className="text-sm font-semibold text-red-300">
-            Something went wrong
-          </p>
-
-          <p className="mt-1 text-xs leading-5 text-red-300/60">
-            {message}
-          </p>
-
-        </div>
-
-
-        <button
-          onClick={onClose}
-          className="text-zinc-600 transition hover:text-white"
-        >
-          ×
-        </button>
+          </div>
+        )}
 
       </div>
 
-    </div>
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| Stat
-|--------------------------------------------------------------------------
-*/
-
-function Stat({
-  value,
-  label,
-}: {
-  value: string;
-  label: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
-
-      <p className="text-lg font-bold">
-        {value}
-      </p>
-
-      <p className="mt-1 text-[9px] uppercase tracking-[0.2em] text-zinc-600">
-        {label}
-      </p>
-
-    </div>
+    </main>
   );
 }
