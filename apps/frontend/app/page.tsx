@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import OnlineUsers from "@/components/onlineUsers";
+import { Router } from "next/router";
 
 type CellState = "normal" | "correct" | "wrong";
 
@@ -18,32 +21,60 @@ type GamePhase =
   | "SUBMITTING"
   | "COMPLETED";
 
+export type User = {
+  id: string;
+  name: string;
+  ws: WebSocket;
+};
+
+type Opponent = {
+  id: string;
+  name: string;
+  score: number;
+};
+
 export default function Home() {
   const wsRef = useRef<WebSocket | null>(null);
 
-  const timerRef =
-    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const route = useRouter();
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [connected, setConnected] = useState(false);
 
   const [gameId, setGameId] = useState("");
 
-  const [question, setQuestion] =
-    useState<Question | null>(null);
+  const [question, setQuestion] = useState<Question | null>(null);
 
-  const [cells, setCells] =
-    useState<CellState[]>([]);
+  const [cells, setCells] = useState<CellState[]>([]);
 
-  const [phase, setPhase] =
-    useState<GamePhase>("LOBBY");
+  const [phase, setPhase] = useState<GamePhase>("LOBBY");
 
-  const [score, setScore] = useState(0);
+  // My score
+  const [score1, setScore1] = useState<number>(0);
 
-  const [questionNumber, setQuestionNumber] =
-    useState(1);
+  // Opponent score
+  const [score2, setScore2] = useState<number>(0);
 
-  const [message, setMessage] =
-    useState("Connecting...");
+  // My username
+  const [user1, setUser1] = useState<string>("");
+
+  // Opponent username
+  const [user2, setUser2] = useState<string>("");
+
+  const [opponent, setOpponent] = useState<Opponent | null>(null);
+
+  const [questionNumber, setQuestionNumber] = useState(1);
+
+  const [timer, setTimer] = useState<number>(60);
+
+  const [end, setEnd] = useState(false);
+
+  const [message, setMessage] = useState("Connecting...");
+
+  const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
 
   /*
    * ==========================================
@@ -54,14 +85,24 @@ export default function Home() {
   useEffect(() => {
     const token = localStorage.getItem("token");
 
+    const storedUser = localStorage.getItem("user");
+    
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+
+        setUser1(parsedUser.username || parsedUser.name || "");
+      } catch (error) {
+        console.error("Failed to parse user:", error);
+      }
+    }
+
     if (!token) {
       setMessage("Please login first");
       return;
     }
 
-    const ws = new WebSocket(
-      `ws://localhost:8080?token=${token}`
-    );
+    const ws = new WebSocket(`ws://localhost:8080?token=${token}`);
 
     wsRef.current = ws;
 
@@ -74,13 +115,17 @@ export default function Home() {
 
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
+
       setMessage("WebSocket error");
     };
 
     ws.onclose = (event) => {
       console.log("WebSocket closed");
+
       console.log("Close code:", event.code);
+
       console.log("Close reason:", event.reason);
+
       console.log("Was clean:", event.wasClean);
 
       setConnected(false);
@@ -94,24 +139,55 @@ export default function Home() {
 
       /*
        * ==========================================
-       * FIRST QUESTION
+       * ONLINE USERS
        * ==========================================
        */
 
-      if (data.type === "QUESTION") {
-        const [questionId, pattern] =
-          data.payload.question;
+      if (data.type === "ONLINE_USER") {
+        const { users } = data.payload;
+        
+        setOnlineUsers(users);
+      }
 
-        const receivedGameId =
-          data.payload.runningGameId;
+      /*
+       * ==========================================
+       * FIRST QUESTION
+       * ==========================================
+       */
+      else if (data.type === "QUESTION") {
+        const [questionId, pattern] = data.payload.question;
 
-        console.log(
-          "First question:",
-          questionId,
-          pattern
-        );
+        const { endTime } = data.payload;
+
+        const receivedGameId = data.payload.runningGameId;
 
         setGameId(receivedGameId);
+
+        /*
+         * Start 60 second countdown
+         */
+
+        if (countdownRef.current) {
+          clearInterval(countdownRef.current);
+        }
+
+        countdownRef.current = setInterval(() => {
+          const remaining = Math.ceil((endTime - Date.now()) / 1000);
+
+          setTimer(Math.max(0, remaining));
+
+          if (remaining <= 0) {
+            if (countdownRef.current) {
+              clearInterval(countdownRef.current);
+
+              countdownRef.current = null;
+            }
+
+            setTimer(0);
+            setEnd(true);
+            setPhase("COMPLETED");
+          }
+        }, 1000);
 
         setQuestion({
           id: questionId,
@@ -119,11 +195,6 @@ export default function Home() {
         });
 
         setQuestionNumber(1);
-
-        /*
-         * First question starts immediately.
-         * No 1 second intro.
-         */
 
         startShowingPattern(pattern);
       }
@@ -135,46 +206,58 @@ export default function Home() {
        */
 
       if (data.type === "NEXT_QUESTION") {
-        const questionId =
-          data.payload.questionId;
+        const questionId = data.payload.questionId;
 
-        const pattern =
-          data.payload.question;
+        const pattern = data.payload.question;
 
-        console.log(
-          "Next question:",
-          questionId,
-          pattern
-        );
-
-        /*
-         * Store the new question.
-         */
+        console.log("Next question:", questionId, pattern);
 
         setQuestion({
           id: questionId,
           pattern: pattern,
         });
 
-        /*
-         * Increase question number.
-         */
-
-        setQuestionNumber(
-          (previous) => previous + 1
-        );
-
-        /*
-         * IMPORTANT:
-         *
-         * Pass `pattern` directly.
-         *
-         * Don't read question.pattern
-         * inside the timer because React
-         * state updates asynchronously.
-         */
+        setQuestionNumber((previous) => previous + 1);
 
         startQuestionIntro(pattern);
+      }
+
+      /*
+       * ==========================================
+       * SCORE UPDATE
+       * ==========================================
+       */
+
+      if (data.type === "SCORE_UPDATE") {
+        const { myScore, opponent } = data.payload;
+
+        setScore1(myScore);
+
+        setScore2(opponent?.score ?? 0);
+
+        setOpponent(opponent ?? null);
+
+        if (opponent) {
+          setUser2(opponent.name);
+        }
+      }
+
+      /*
+       * ==========================================
+       * TIME UP
+       * ==========================================
+       */
+
+      if (data.type === "TIME_UP") {
+        if (countdownRef.current) {
+          clearInterval(countdownRef.current);
+
+          countdownRef.current = null;
+        }
+
+        setTimer(0);
+        setEnd(true);
+        setPhase("COMPLETED");
       }
 
       /*
@@ -201,28 +284,34 @@ export default function Home() {
         if (data.payload?.correct === false) {
           setPhase("PLAYING");
 
-          setMessage(
-            "Some boxes were incorrect. Try again."
-          );
+          setMessage("Some boxes were incorrect. Try again.");
         }
       }
     };
 
     return () => {
       clearGameTimer();
+
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
+
+        countdownRef.current = null;
+      }
+
       ws.close();
     };
   }, []);
 
   /*
    * ==========================================
-   * CLEAR TIMER
+   * CLEAR QUESTION TIMER
    * ==========================================
    */
 
   function clearGameTimer() {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
+
       timerRef.current = null;
     }
   }
@@ -238,13 +327,9 @@ export default function Home() {
       return;
     }
 
-    if (
-      wsRef.current.readyState !==
-      WebSocket.OPEN
-    ) {
-      setMessage(
-        "WebSocket is not connected"
-      );
+    if (wsRef.current.readyState !== WebSocket.OPEN) {
+      setMessage("WebSocket is not connected");
+
       return;
     }
 
@@ -254,14 +339,12 @@ export default function Home() {
       JSON.stringify({
         type: "CREATE",
         payload: {},
-      })
+      }),
     );
 
     setPhase("WAITING");
 
-    setMessage(
-      "Waiting for another player..."
-    );
+    setMessage("Waiting for another player...");
   }
 
   /*
@@ -275,13 +358,9 @@ export default function Home() {
       return;
     }
 
-    if (
-      wsRef.current.readyState !==
-      WebSocket.OPEN
-    ) {
-      setMessage(
-        "WebSocket is not connected"
-      );
+    if (wsRef.current.readyState !== WebSocket.OPEN) {
+      setMessage("WebSocket is not connected");
+
       return;
     }
 
@@ -291,7 +370,7 @@ export default function Home() {
       JSON.stringify({
         type: "JOIN",
         payload: {},
-      })
+      }),
     );
 
     setPhase("WAITING");
@@ -303,36 +382,14 @@ export default function Home() {
    * ==========================================
    * QUESTION INTRO
    * ==========================================
-   *
-   * For question 2, 3, 4...
-   *
-   * QUESTION 2
-   *      ↓
-   *   1 second
-   *      ↓
-   * Green pattern
-   *      ↓
-   *   3 seconds
-   *      ↓
-   * Player clicks
    */
 
-  function startQuestionIntro(
-    pattern: string[][]
-  ) {
+  function startQuestionIntro(pattern: string[][]) {
     clearGameTimer();
 
     setPhase("INTRO");
 
     setMessage("");
-
-    /*
-     * Show:
-     *
-     * Question 2
-     *
-     * for exactly 1 second.
-     */
 
     timerRef.current = setTimeout(() => {
       startShowingPattern(pattern);
@@ -343,47 +400,23 @@ export default function Home() {
    * ==========================================
    * SHOW PATTERN
    * ==========================================
-   *
-   * Green ON boxes are shown for 3 seconds.
    */
 
-  function startShowingPattern(
-    pattern: string[][]
-  ) {
+  function startShowingPattern(pattern: string[][]) {
     clearGameTimer();
 
-    const totalCells =
-      pattern.flat().length;
+    const totalCells = pattern.flat().length;
 
-    /*
-     * Reset all boxes.
-     */
-
-    setCells(
-      Array(totalCells).fill("normal")
-    );
-
-    /*
-     * Show green pattern.
-     */
+    setCells(Array(totalCells).fill("normal"));
 
     setPhase("SHOWING");
 
-    setMessage(
-      "Remember the green boxes"
-    );
-
-    /*
-     * After 3 seconds,
-     * allow player to click.
-     */
+    setMessage("Remember the green boxes");
 
     timerRef.current = setTimeout(() => {
       setPhase("PLAYING");
 
-      setMessage(
-        "Select the boxes you remember"
-      );
+      setMessage("Select the boxes you remember");
     }, 3000);
   }
 
@@ -393,14 +426,7 @@ export default function Home() {
    * ==========================================
    */
 
-  function handleCellClick(
-    index: number
-  ) {
-    /*
-     * Player can only click
-     * during PLAYING.
-     */
-
+  function handleCellClick(index: number) {
     if (phase !== "PLAYING") {
       return;
     }
@@ -409,25 +435,16 @@ export default function Home() {
       return;
     }
 
-    /*
-     * Don't allow clicking an already
-     * selected box.
-     */
-
     if (cells[index] !== "normal") {
       return;
     }
 
-    const flattenedPattern =
-      question.pattern.flat();
+    const flattenedPattern = question.pattern.flat();
 
-    const actualValue =
-      flattenedPattern[index];
+    const actualValue = flattenedPattern[index];
 
     /*
-     * ==========================================
      * CORRECT BOX
-     * ==========================================
      */
 
     if (actualValue === "on") {
@@ -437,40 +454,18 @@ export default function Home() {
 
       setCells(updatedCells);
 
-      setScore(
-        (previous) => previous + 1
-      );
+      setScore1((previous) => previous + 1);
 
-      /*
-       * Count total ON boxes.
-       */
+      const totalOn = flattenedPattern.filter((value) => value === "on").length;
 
-      const totalOn =
-        flattenedPattern.filter(
-          (value) => value === "on"
-        ).length;
+      const selectedCorrect = updatedCells.filter(
+        (value) => value === "correct",
+      ).length;
 
-      /*
-       * Count correctly selected boxes.
-       */
-
-      const selectedCorrect =
-        updatedCells.filter(
-          (value) => value === "correct"
-        ).length;
-
-      /*
-       * Player found every ON box.
-       */
-
-      if (
-        selectedCorrect === totalOn
-      ) {
+      if (selectedCorrect === totalOn) {
         setPhase("SUBMITTING");
 
-        setMessage(
-          "Perfect! Checking answer..."
-        );
+        setMessage("Perfect! Checking answer...");
 
         submitAnswer(updatedCells);
       }
@@ -479,9 +474,7 @@ export default function Home() {
     }
 
     /*
-     * ==========================================
      * WRONG BOX
-     * ==========================================
      */
 
     const updatedCells = [...cells];
@@ -492,31 +485,18 @@ export default function Home() {
 
     setMessage("Wrong box!");
 
-    /*
-     * Red → white after 700ms.
-     */
-
     setTimeout(() => {
       setCells((current) => {
         const updated = [...current];
 
-        if (
-          updated[index] === "wrong"
-        ) {
+        if (updated[index] === "wrong") {
           updated[index] = "normal";
         }
 
         return updated;
       });
 
-      /*
-       * Return normal message if
-       * player is still playing.
-       */
-
-      setMessage(
-        "Select the boxes you remember"
-      );
+      setMessage("Select the boxes you remember");
     }, 700);
   }
 
@@ -526,9 +506,7 @@ export default function Home() {
    * ==========================================
    */
 
-  function submitAnswer(
-    selectedCells: CellState[]
-  ) {
+  function submitAnswer(selectedCells: CellState[]) {
     if (!wsRef.current) {
       return;
     }
@@ -541,82 +519,38 @@ export default function Home() {
       return;
     }
 
-    /*
-     * Convert:
-     *
-     * correct → on
-     * normal  → off
-     * wrong   → off
-     */
+    const answerFlat = selectedCells.map((cell) =>
+      cell === "correct" ? "on" : "off",
+    );
 
-    const answerFlat =
-      selectedCells.map((cell) =>
-        cell === "correct"
-          ? "on"
-          : "off"
-      );
-
-    /*
-     * Convert 1D array back into
-     * the original 2D structure.
-     *
-     * Example:
-     *
-     * [
-     *   "on", "off", "on", "off",
-     *   "off", "on", "off", "on"
-     * ]
-     *
-     * becomes:
-     *
-     * [
-     *   ["on", "off", "on", "off"],
-     *   ["off", "on", "off", "on"]
-     * ]
-     */
-
-    const columns =
-      question.pattern[0].length;
+    const columns = question.pattern[0].length;
 
     const answer: string[][] = [];
 
-    for (
-      let i = 0;
-      i < answerFlat.length;
-      i += columns
-    ) {
-      answer.push(
-        answerFlat.slice(
-          i,
-          i + columns
-        )
-      );
+    for (let i = 0; i < answerFlat.length; i += columns) {
+      answer.push(answerFlat.slice(i, i + columns));
     }
 
-    console.log(
-      "SUBMITTING ANSWER:",
-      {
-        questionId: question.id,
-        gameId: gameId,
-        answer: answer,
-      }
-    );
+    console.log("SUBMITTING ANSWER:", {
+      questionId: question.id,
+
+      gameId: gameId,
+
+      answer: answer,
+    });
 
     wsRef.current.send(
       JSON.stringify({
         type: "SUBMIT",
 
         payload: {
-          questionId:
-            question.id,
+          questionId: question.id,
 
-          gameId:
-            gameId,
+          gameId: gameId,
 
-          answer:
-            answer,
+          answer: answer,
         },
-      })
+      }),
     );
   }
 
@@ -626,21 +560,9 @@ export default function Home() {
    * ==========================================
    */
 
-  function getCellColor(
-    index: number
-  ) {
-    /*
-     * During the 3 second memory phase,
-     * show ON boxes as green.
-     */
-
-    if (
-      phase === "SHOWING" &&
-      question
-    ) {
-      const value =
-        question.pattern
-          .flat()[index];
+  function getCellColor(index: number) {
+    if (phase === "SHOWING" && question) {
+      const value = question.pattern.flat()[index];
 
       if (value === "on") {
         return "bg-green-500 animate-pulse";
@@ -649,297 +571,680 @@ export default function Home() {
       return "bg-white";
     }
 
-    /*
-     * Normal box.
-     */
-
-    if (
-      cells[index] === "normal"
-    ) {
+    if (cells[index] === "normal") {
       return "bg-white";
     }
 
-    /*
-     * Correct selected box.
-     */
-
-    if (
-      cells[index] === "correct"
-    ) {
+    if (cells[index] === "correct") {
       return "bg-green-500";
     }
 
-    /*
-     * Wrong selected box.
-     */
-
-    if (
-      cells[index] === "wrong"
-    ) {
+    if (cells[index] === "wrong") {
       return "bg-red-500";
     }
 
-    return "bg-white";
+    return "bg-zinc-700";
   }
 
   /*
    * ==========================================
-   * UI
+   * RESULT
+   * ==========================================
+   */
+
+  function getResult() {
+    if (score1 > score2) {
+      return "WINNER";
+    }
+
+    if (score1 < score2) {
+      return "LOST";
+    }
+
+    return "DRAW";
+  }
+
+  /*
+   * ==========================================
+   * RENDER
    * ==========================================
    */
 
   return (
-    <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+    <main className="min-h-screen bg-violet-700 text-white flex flex-col items-center justify-center px-4">
+      {/* ========================================
+          GAME
+      ======================================== */}
 
-      <div className="w-full max-w-lg">
+      {!end ? (
+        <div className="w-full max-w-lg">
+          {/* ====================================
+              ACTIVE PLAYER
+          ==================================== */}
 
-        {/* ================================= */}
-        {/* LOBBY */}
-        {/* ================================= */}
+          <div className="flex flex-col items-center mb-6">
+            <div
+              className="
+              flex
+              h-14
+              w-14
+              items-center
+              justify-center
+              rounded-full
+              bg-white
+              text-black
+              text-lg
+              font-bold
+              uppercase
+            "
+            >
+              {user1 ? user1.slice(0, 2) : "??"}
+            </div>
 
-        {phase === "LOBBY" && (
-          <div className="text-center">
+            <p className="mt-2 text-sm font-medium">{user1 || "Player"}</p>
+          </div>
 
-            <h1 className="text-5xl font-bold">
-              Memory Grid
-            </h1>
+          {/* ====================================
+              ONLINE USERS
+          ==================================== */}
 
-            <p className="text-gray-400 mt-3">
-              {message}
-            </p>
+          <OnlineUsers users={onlineUsers} />
 
-            <div className="flex flex-col gap-4 max-w-sm mx-auto mt-10">
+          {/* ====================================
+              TIMER
+          ==================================== */}
 
-              <button
-                onClick={createGame}
-                disabled={!connected}
+          <div
+            className="
+            mb-6
+            text-center
+            text-2xl
+            font-bold
+          "
+          >
+            Time left: {timer}
+          </div>
+
+          {/* ====================================
+              SCOREBOARD
+          ==================================== */}
+
+          {(phase === "SHOWING" ||
+            phase === "PLAYING" ||
+            phase === "SUBMITTING") && (
+            <div
+              className="
+              mb-8
+              flex
+              items-center
+              justify-between
+              rounded-2xl
+              border
+              border-white/10
+              bg-black/10
+              p-4
+            "
+            >
+              {/* MY SCORE */}
+
+              <div
                 className="
-                  w-full
-                  rounded-xl
+                flex
+                flex-col
+                items-center
+              "
+              >
+                <div
+                  className="
+                  flex
+                  h-10
+                  w-10
+                  items-center
+                  justify-center
+                  rounded-full
                   bg-white
                   text-black
-                  py-4
-                  font-semibold
-                  text-lg
-                  hover:bg-gray-200
-                  disabled:opacity-40
-                  disabled:cursor-not-allowed
+                  text-sm
+                  font-bold
+                  uppercase
                 "
+                >
+                  {user1 ? user1.slice(0, 2) : "??"}
+                </div>
+
+                <p
+                  className="
+                  mt-1
+                  max-w-24
+                  truncate
+                  text-xs
+                  text-zinc-200
+                "
+                >
+                  {user1 || "You"}
+                </p>
+
+                <p
+                  className="
+                  text-2xl
+                  font-black
+                "
+                >
+                  {score1}
+                </p>
+              </div>
+
+              {/* VS */}
+
+              <div
+                className="
+                text-xs
+                font-bold
+                text-white/40
+              "
               >
-                Create Game
-              </button>
+                VS
+              </div>
 
-              <button
-                onClick={joinGame}
-                disabled={!connected}
+              {/* OPPONENT */}
+
+              <div
                 className="
-                  w-full
-                  rounded-xl
-                  border
-                  border-white/20
-                  bg-white/5
-                  py-4
-                  font-semibold
-                  text-lg
-                  hover:bg-white/10
-                  disabled:opacity-40
-                  disabled:cursor-not-allowed
-                "
+                flex
+                flex-col
+                items-center
+              "
               >
-                Join Game
-              </button>
+                <div
+                  className="
+                  flex
+                  h-10
+                  w-10
+                  items-center
+                  justify-center
+                  rounded-full
+                  bg-black/30
+                  text-sm
+                  font-bold
+                  uppercase
+                "
+                >
+                  {user2 ? user2.slice(0, 2) : "??"}
+                </div>
 
+                <p
+                  className="
+                  mt-1
+                  max-w-24
+                  truncate
+                  text-xs
+                  text-zinc-200
+                "
+                >
+                  {user2 || "Opponent"}
+                </p>
+
+                <p
+                  className="
+                  text-2xl
+                  font-black
+                "
+                >
+                  {score2}
+                </p>
+              </div>
             </div>
+          )}
 
-          </div>
-        )}
+          {/* ====================================
+              LOBBY
+          ==================================== */}
 
-        {/* ================================= */}
-        {/* WAITING */}
-        {/* ================================= */}
-
-        {phase === "WAITING" && (
-          <div className="text-center">
-
-            <h1 className="text-4xl font-bold">
-              Waiting for player
-            </h1>
-
-            <div className="flex justify-center gap-2 mt-8">
-
-              <span
+          {phase === "LOBBY" && (
+            <div
+              className="
+              text-center
+            "
+            >
+              <h1
                 className="
-                  w-3
-                  h-3
-                  bg-white
-                  rounded-full
-                  animate-bounce
-                "
-              />
-
-              <span
-                className="
-                  w-3
-                  h-3
-                  bg-white
-                  rounded-full
-                  animate-bounce
-                "
-                style={{
-                  animationDelay: "150ms",
-                }}
-              />
-
-              <span
-                className="
-                  w-3
-                  h-3
-                  bg-white
-                  rounded-full
-                  animate-bounce
-                "
-                style={{
-                  animationDelay: "300ms",
-                }}
-              />
-
-            </div>
-
-            <p className="text-gray-400 mt-6">
-              {message}
-            </p>
-
-          </div>
-        )}
-
-        {/* ================================= */}
-        {/* QUESTION INTRO */}
-        {/* ================================= */}
-
-        {phase === "INTRO" && (
-          <div className="min-h-[400px] flex items-center justify-center">
-
-            <div className="text-center">
-
-              <p className="text-gray-400 text-lg">
-                Get ready
-              </p>
-
-              <h1 className="text-6xl font-bold mt-3">
-                Question {questionNumber}
+                text-5xl
+                font-bold
+              "
+              >
+                Memory Grid
               </h1>
 
-            </div>
-
-          </div>
-        )}
-
-        {/* ================================= */}
-        {/* GAME */}
-        {/* ================================= */}
-
-        {(
-          phase === "SHOWING" ||
-          phase === "PLAYING" ||
-          phase === "SUBMITTING"
-        ) && (
-          <div>
-
-            {/* HEADER */}
-
-            <div className="flex justify-between items-center mb-8">
-
-              <div>
-                <p className="text-gray-500 text-sm">
-                  QUESTION
-                </p>
-
-                <p className="text-2xl font-bold">
-                  {questionNumber}
-                </p>
-              </div>
-
-              <div className="text-right">
-                <p className="text-gray-500 text-sm">
-                  SCORE
-                </p>
-
-                <p className="text-2xl font-bold">
-                  {score}
-                </p>
-              </div>
-
-            </div>
-
-            {/* MESSAGE */}
-
-            <div className="text-center mb-8">
-
-              <p className="text-gray-400">
+              <p
+                className="
+                text-gray-200
+                mt-3
+              "
+              >
                 {message}
               </p>
 
+              <div
+                className="
+                flex
+                flex-col
+                gap-4
+                max-w-sm
+                mx-auto
+                mt-10
+              "
+              >
+                <button
+                  onClick={createGame}
+                  disabled={!connected}
+                  className="
+                    w-full
+                    rounded-xl
+                    bg-white
+                    text-black
+                    py-4
+                    font-semibold
+                    text-lg
+                    hover:bg-gray-200
+                    disabled:opacity-40
+                    disabled:cursor-not-allowed
+                  "
+                >
+                  Create Game
+                </button>
+
+                <button
+                  onClick={joinGame}
+                  disabled={!connected}
+                  className="
+                    w-full
+                    rounded-xl
+                    border
+                    border-white/20
+                    bg-white/5
+                    py-4
+                    font-semibold
+                    text-lg
+                    hover:bg-white/10
+                    disabled:opacity-40
+                    disabled:cursor-not-allowed
+                  "
+                >
+                  Join Game
+                </button>
+              </div>
             </div>
+          )}
 
-            {/* GRID */}
+          {/* ====================================
+              WAITING
+          ==================================== */}
 
-            <div className="grid grid-cols-5 gap-3 max-w-md mx-auto">
+          {phase === "WAITING" && (
+            <div
+              className="
+              text-center
+            "
+            >
+              <h1
+                className="
+                text-4xl
+                font-bold
+              "
+              >
+                Waiting for player
+              </h1>
 
-              {cells.map(
-                (state, index) => (
+              <div
+                className="
+                flex
+                justify-center
+                gap-2
+                mt-8
+              "
+              >
+                <span
+                  className="
+                  w-3
+                  h-3
+                  bg-white
+                  rounded-full
+                  animate-bounce"
+                />
+
+                <span
+                  className="
+                    w-3
+                    h-3
+                    bg-white
+                    rounded-full
+                    animate-bounce
+                  "
+                  style={{
+                    animationDelay: "150ms",
+                  }}
+                />
+
+                <span
+                  className="
+                    w-3
+                    h-3
+                    bg-white
+                    rounded-full
+                    animate-bounce
+                  "
+                  style={{
+                    animationDelay: "300ms",
+                  }}
+                />
+              </div>
+
+              <p
+                className="
+                text-gray-200
+                mt-6
+              "
+              >
+                {message}
+              </p>
+            </div>
+          )}
+
+          {/* ====================================
+              INTRO
+          ==================================== */}
+
+          {phase === "INTRO" && (
+            <div
+              className="
+              min-h-[400px]
+              flex
+              items-center
+              justify-center
+            "
+            >
+              <div
+                className="
+                text-center
+              "
+              >
+                <p
+                  className="
+                  text-white/60
+                  text-lg
+                "
+                >
+                  Get ready
+                </p>
+
+                <h1
+                  className="
+                  text-6xl
+                  font-bold
+                  mt-3
+                "
+                >
+                  Question {questionNumber}
+                </h1>
+              </div>
+            </div>
+          )}
+
+          {/* ====================================
+              GAME GRID
+          ==================================== */}
+
+          {(phase === "SHOWING" ||
+            phase === "PLAYING" ||
+            phase === "SUBMITTING") && (
+            <div>
+              <div
+                className="
+                flex
+                justify-between
+                items-center
+                mb-8
+              "
+              >
+                <div>
+                  <p
+                    className="
+                    text-white/50
+                    text-sm
+                  "
+                  >
+                    QUESTION
+                  </p>
+
+                  <p
+                    className="
+                    text-2xl
+                    font-bold
+                  "
+                  >
+                    {questionNumber}
+                  </p>
+                </div>
+
+                <div
+                  className="
+                  text-right
+                "
+                >
+                  <p
+                    className="
+                    text-white/50
+                    text-sm
+                  "
+                  >
+                    SCORE
+                  </p>
+
+                  <p
+                    className="
+                    text-2xl
+                    font-bold
+                  "
+                  >
+                    {score1}
+                  </p>
+                </div>
+              </div>
+
+              <div
+                className="
+                text-center
+                mb-8
+              "
+              >
+                <p
+                  className="
+                  text-white/70
+                "
+                >
+                  {message}
+                </p>
+              </div>
+
+              {/* GRID */}
+
+              <div
+                className="
+                grid
+                grid-cols-5
+                gap-3
+                max-w-md
+                mx-auto
+              "
+              >
+                {cells.map((state, index) => (
                   <button
                     key={index}
-                    onClick={() =>
-                      handleCellClick(index)
-                    }
-                    disabled={
-                      phase !== "PLAYING"
-                    }
+                    onClick={() => handleCellClick(index)}
+                    disabled={phase !== "PLAYING"}
                     className={`
-                      aspect-square
-                      rounded-xl
-                      transition-all
-                      duration-200
-                      ${getCellColor(index)}
-                      ${
-                        phase === "PLAYING"
-                          ? "cursor-pointer hover:scale-105"
-                          : "cursor-default"
-                      }
-                    `}
+                        aspect-square
+                        rounded-xl
+                        transition-transform
+                        duration-150
+
+                        hover:-translate-x-1
+                        hover:-translate-y-1
+
+                        hover:shadow-[6px_6px_0px_rgba(0,0,0,1)]
+
+                        active:translate-x-0
+                        active:translate-y-0
+
+                        ${getCellColor(index)}
+
+                        ${
+                          phase === "PLAYING"
+                            ? "cursor-pointer"
+                            : "cursor-default"
+                        }
+                      `}
                   />
-                )
-              )}
-
+                ))}
+              </div>
             </div>
+          )}
+        </div>
+      ) : (
+        /* ========================================
+           RESULT MODAL
+        ======================================== */
 
-          </div>
-        )}
+        <div
+          className="
+          fixed
+          inset-0
+          z-50
+          flex
+          items-center
+          justify-center
+          bg-black/70
+          px-4
+        "
+        >
+          <div
+            className="
+            w-full
+            max-w-md
+            rounded-3xl
+            border
+            border-white/10
+            bg-zinc-950
+            p-8
+            shadow-2xl
+          "
+          >
+            {/* RESULT */}
 
-        {/* ================================= */}
-        {/* COMPLETED */}
-        {/* ================================= */}
-
-        {phase === "COMPLETED" && (
-          <div className="text-center">
-
-            <p className="text-gray-400">
-              Game completed
-            </p>
-
-            <h1 className="text-6xl font-bold mt-4">
-              {score}
+            <h1
+              className="
+              text-center
+              text-5xl
+              font-black
+            "
+            >
+              {getResult()}
             </h1>
 
-            <p className="text-gray-400 mt-2">
-              Final Score
+            {/* SCORE LINE */}
+
+            <div
+              className="
+              mt-10
+              flex
+              items-center
+            "
+            >
+              {/* MY SCORE */}
+
+              <div
+                className="
+                flex
+                flex-1
+                flex-col
+                items-start
+              "
+              >
+                <p
+                  className="
+                  text-5xl
+                  font-black
+                "
+                >
+                  {score1}
+                </p>
+
+                <p
+                  className="
+                  mt-2
+                  text-lg
+                  text-zinc-400
+                "
+                >
+                  {user1 || "You"}
+                </p>
+              </div>
+
+              {/* MIDDLE LINE */}
+
+              <div
+                className="
+                mx-6
+                h-20
+                w-px
+                bg-white/20"
+              />
+
+              {/* OPPONENT SCORE */}
+
+              <div
+                className="
+                flex
+                flex-1
+                flex-col
+                items-end"
+              >
+                <p
+                  className="
+                  text-5xl
+                  font-black
+                "
+                >
+                  {score2}
+                </p>
+
+                <p
+                  className="
+                  mt-2
+                  text-lg
+                  text-zinc-400
+                "
+                >
+                  {user2 || "Opponent"}
+                </p>
+              </div>
+            </div>
+
+            {/* RESULT DESCRIPTION */}
+
+            <p
+              className="
+              mt-8
+              text-center
+              text-sm
+              text-zinc-500
+            "
+            >
+              Final score
             </p>
-
           </div>
-        )}
-
-      </div>
-
+        </div>
+      )}
     </main>
   );
 }

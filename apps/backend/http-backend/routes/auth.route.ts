@@ -72,7 +72,7 @@ authRoute.post("/login", async (req: Request, res: Response) => {
         const token = jwt.sign(
             { userId: user.id },
             process.env.JWT_SECRET!,
-            { expiresIn: "1d" }
+            { expiresIn: "30d" }
         );
         console.log(`this is user ${user}`)
         console.log("token "+token)
