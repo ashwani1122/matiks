@@ -2,12 +2,12 @@ import { User } from "@/app/page";
 
 export default function OnlineUsers({ users }: { users: User[] }) {
   return (
-    <div>
-      <div>
-        <h1>Active users</h1>
-        <div>
+    <div className="">
+      <div className=" bg-pink-700 rounded-full px-4 flex items-center justify-start gap-10">
+        <h1>users</h1>
+        <div className="flex items-center justify-center gap-2">
           {users.map((user) => {
-            return <div>{user.name}</div>;
+            return <div className="rounded-full flex items-center justify-center font-bold text-2xl w-[70px] h-[70px] bg-cyan-500 hover:border cursor-pointer ">{(user.name).slice(0, 2)}</div>;
           })}
         </div>
       </div>

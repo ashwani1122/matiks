@@ -84,31 +84,19 @@ export default function Home() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-
-    const storedUser = localStorage.getItem("user");
-    
-    if (storedUser) {
-      try {
-        const parsedUser = JSON.parse(storedUser);
-
-        setUser1(parsedUser.username || parsedUser.name || "");
-      } catch (error) {
-        console.error("Failed to parse user:", error);
-      }
-    }
-
+  
     if (!token) {
       setMessage("Please login first");
       return;
     }
 
     const ws = new WebSocket(`ws://localhost:8080?token=${token}`);
-
+    
     wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("WebSocket connected");
-
+      console.log("request came ");
       setConnected(true);
       setMessage("Connected");
     };
@@ -231,7 +219,8 @@ export default function Home() {
       if (data.type === "SCORE_UPDATE") {
         const { myScore, opponent } = data.payload;
 
-        setScore1(myScore);
+        setScore1(myScore.score);
+        setUser1(myScore.name);
 
         setScore2(opponent?.score ?? 0);
 
@@ -454,7 +443,7 @@ export default function Home() {
 
       setCells(updatedCells);
 
-      setScore1((previous) => previous + 1);
+      
 
       const totalOn = flattenedPattern.filter((value) => value === "on").length;
 
@@ -497,7 +486,7 @@ export default function Home() {
       });
 
       setMessage("Select the boxes you remember");
-    }, 700);
+    }, 100);
   }
 
   /*
@@ -618,42 +607,9 @@ export default function Home() {
 
       {!end ? (
         <div className="w-full max-w-lg">
-          {/* ====================================
-              ACTIVE PLAYER
-          ==================================== */}
-
-          <div className="flex flex-col items-center mb-6">
-            <div
-              className="
-              flex
-              h-14
-              w-14
-              items-center
-              justify-center
-              rounded-full
-              bg-white
-              text-black
-              text-lg
-              font-bold
-              uppercase
-            "
-            >
-              {user1 ? user1.slice(0, 2) : "??"}
-            </div>
-
-            <p className="mt-2 text-sm font-medium">{user1 || "Player"}</p>
-          </div>
-
-          {/* ====================================
-              ONLINE USERS
-          ==================================== */}
-
+       {onlineUsers.length>0 && 
           <OnlineUsers users={onlineUsers} />
-
-          {/* ====================================
-              TIMER
-          ==================================== */}
-
+}
           <div
             className="
             mb-6
@@ -746,7 +702,6 @@ export default function Home() {
                 VS
               </div>
 
-              {/* OPPONENT */}
 
               <div
                 className="
@@ -1072,9 +1027,8 @@ export default function Home() {
                 className="
                 grid
                 grid-cols-5
-                gap-3
-                max-w-md
-                mx-auto
+                gap-1
+                mb-20
               "
               >
                 {cells.map((state, index) => (
@@ -1083,6 +1037,7 @@ export default function Home() {
                     onClick={() => handleCellClick(index)}
                     disabled={phase !== "PLAYING"}
                     className={`
+                        w-14
                         aspect-square
                         rounded-xl
                         transition-transform
