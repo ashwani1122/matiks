@@ -136,7 +136,17 @@ export default function Home() {
         
         setOnlineUsers(users);
       }
+       else if (data.type === "GAME_CREATED") {
+        const { gameId, member } = data.payload;
 
+        console.log("GAME CREATED:", gameId);
+        console.log("GAME MEMBERS:", member);
+
+        setGameId(gameId);
+
+        setPhase("WAITING");
+        setMessage("Waiting for another player...");
+      }
       /*
        * ==========================================
        * FIRST QUESTION
