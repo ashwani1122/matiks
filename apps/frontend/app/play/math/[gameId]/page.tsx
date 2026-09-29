@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-type Screen = "connect" | "lobby" | "search" | "game";
+import { useParams, useRouter } from "next/navigation";
 
 type Question = {
   id: string | number;
@@ -18,7 +17,7 @@ type Finished = {
   opponent: { name: string; score: number } | null;
 };
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080";
+const WS_URL = process.env.NEXT_PUBLIC_MATH_WS_URL ?? "ws://localhost:8080";
 const DEFAULT_DURATION_MS = 60_000;
 const FEEDBACK_MS = 1200;
 
@@ -31,6 +30,17 @@ const parseAnswer = (raw: string): unknown => {
   } catch {
     return raw;
   }
+};
+
+/* Updates the URL bar without going through Next's router. router.replace /
+   router.push navigate the [gameId] route, which remounts this page (a new
+   dynamic-segment value is a different route match), which tears the
+   socket down, reconnects, and re-sends PLAY_GAME — which the backend then
+   rejects with "You are already participating in a game." because the
+   reconnected user is already in the game they just matched into.
+   history.replaceState only touches the address bar, no remount. */
+const setUrlSilently = (path: string) => {
+  if (typeof window !== "undefined") window.history.replaceState(null, "", path);
 };
 
 const card =
@@ -48,12 +58,12 @@ const outcome = {
   DRAW: { title: "It's a draw", tone: "text-amber-500" },
 } as const;
 
-export default function Page() {
-  const [screen, setScreen] = useState<Screen>("connect");
-  const [url, setUrl] = useState(WS_URL);
-  const [token, setToken] = useState("");
+export default function MathGamePage() {
+  const router = useRouter();
+  const { gameId } = useParams<{ gameId: string }>();
+
+  const [status, setStatus] = useState<"connecting" | "searching" | "playing">("connecting");
   const [error, setError] = useState("");
-  const [users, setUsers] = useState<{ id: string; name: string }[]>([]);
 
   const [question, setQuestion] = useState<Question | null>(null);
   const [count, setCount] = useState(0);
@@ -75,6 +85,7 @@ export default function Page() {
   const endsAtRef = useRef(0);
   const totalRef = useRef(DEFAULT_DURATION_MS / 1000);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const playSentRef = useRef(false);
 
   const later = (fn: () => void, ms: number) => {
     timersRef.current.push(setTimeout(fn, ms));
@@ -82,49 +93,6 @@ export default function Page() {
   const clearTimers = () => {
     timersRef.current.forEach(clearTimeout);
     timersRef.current = [];
-  };
-
-  useEffect(() => {
-    try {
-      setUrl(localStorage.getItem("qd_url") ?? WS_URL);
-      setToken(
-        sessionStorage.getItem("qd_token") ?? localStorage.getItem("token") ?? "",
-      );
-    } catch {}
-  }, []);
-
-  useEffect(
-    () => () => {
-      clearTimers();
-      wsRef.current?.close();
-    },
-    [],
-  );
-
-  /* Countdown: derived from a local deadline, so clock skew doesn't matter */
-  useEffect(() => {
-    if (screen !== "game" || finished) return;
-    const tick = () =>
-      setTimeLeft(Math.max(0, Math.ceil((endsAtRef.current - Date.now()) / 1000)));
-    tick();
-    const id = setInterval(tick, 250);
-    return () => clearInterval(id);
-  }, [screen, finished]);
-
-  const timeUp = timeLeft === 0;
-
-  /* Keep the input focused on each new question */
-  useEffect(() => {
-    if (screen === "game" && !locked && !waiting && !timeUp && !finished) {
-      inputRef.current?.focus();
-    }
-  }, [screen, question, locked, waiting, timeUp, finished]);
-
-  const send = (type: string, payload: unknown = {}) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type, payload }));
-    }
   };
 
   const showQuestion = useCallback((q: Question) => {
@@ -138,16 +106,100 @@ export default function Page() {
     setCount((c) => c + 1);
   }, []);
 
+  /* Connect once on mount. No token → back to the login page. */
+  useEffect(() => {
+    let cancelled = false;
+
+    let token = "";
+    try {
+      token = localStorage.getItem("token") ?? "";
+    } catch {}
+    if (!token) {
+      router.replace("/");
+      return;
+    }
+
+    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
+    wsRef.current = ws;
+    playSentRef.current = false;
+
+    const send = (type: string, payload: unknown = {}) => {
+      if (cancelled) return;
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload }));
+    };
+
+    ws.onopen = () => {
+      if (cancelled) return;
+      setStatus("searching");
+      // PLAY_GAME is sent once ONLINE_USER arrives, see onmessage below —
+      // sending it immediately here can race the backend attaching its
+      // message listener, since it broadcasts ONLINE_USER before that.
+    };
+
+    ws.onmessage = (e) => {
+      if (cancelled) return;
+      try {
+        const m = JSON.parse(e.data);
+        handleMessage(m.type, m.payload ?? {}, send);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    ws.onerror = () => {
+      if (cancelled) return;
+      setError("Could not reach the game server.");
+    };
+
+    ws.onclose = () => {
+      if (cancelled) return;
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      clearTimers();
+      setError((prev) => prev || "Disconnected from the server.");
+    };
+
+    return () => {
+      cancelled = true;
+      clearTimers();
+      ws.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Countdown derived from a local deadline, so clock skew doesn't matter */
+  useEffect(() => {
+    if (status !== "playing" || finished) return;
+    const tick = () =>
+      setTimeLeft(Math.max(0, Math.ceil((endsAtRef.current - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [status, finished]);
+
+  const timeUp = timeLeft === 0;
+
+  useEffect(() => {
+    if (status === "playing" && !locked && !waiting && !timeUp && !finished) {
+      inputRef.current?.focus();
+    }
+  }, [status, question, locked, waiting, timeUp, finished]);
+
   const handleMessage = useCallback(
-    (type: string, p: any) => {
+    (type: string, p: any, send: (type: string, payload?: unknown) => void) => {
       switch (type) {
         case "ONLINE_USER":
-          setUsers(p.users ?? []);
+          /* Wait for the server's first message before sending PLAY_GAME,
+             so we know its message listener is definitely attached. */
+          if (!playSentRef.current) {
+            playSentRef.current = true;
+            send("PLAY_GAME");
+          }
           break;
 
         case "SEARCHING_FOR_PLAYER":
           gameIdRef.current = p.gameId;
-          setScreen("search");
+          if (p.gameId) setUrlSilently(`/play/math/${p.gameId}`);
           break;
 
         case "GAME_ACCEPTED": {
@@ -161,14 +213,13 @@ export default function Page() {
           setWaiting(false);
           setScore(0);
           setCount(0);
+          if (p.gameId) setUrlSilently(`/play/math/${p.gameId}`);
           showQuestion(p.firstQuestion);
-          setScreen("game");
+          setStatus("playing");
           break;
         }
 
         case "QUESTION":
-          /* The server sends the next question right after the result;
-             hold it until the feedback has been shown. */
           if (lockedRef.current) pendingRef.current = p.question;
           else showQuestion(p.question);
           break;
@@ -182,7 +233,6 @@ export default function Page() {
           break;
 
         case "WAITING_FOR_OPPONENT":
-          /* All questions answered before the timer ran out */
           setWaiting(true);
           break;
 
@@ -201,7 +251,7 @@ export default function Page() {
           break;
 
         case "ERROR":
-          if (overRef.current) break; /* late submit after the game ended */
+          if (overRef.current) break;
           setError(p.message ?? "Something went wrong.");
           lockedRef.current = false;
           setLocked(false);
@@ -211,63 +261,27 @@ export default function Page() {
     [showQuestion],
   );
 
-  const connect = () => {
-    if (!url.trim() || !token.trim()) {
-      setError("Enter the server URL and your token.");
-      return;
-    }
-    setError("");
-    try {
-      localStorage.setItem("qd_url", url.trim());
-      sessionStorage.setItem("qd_token", token.trim());
-    } catch {}
-
-    const ws = new WebSocket(`${url.trim()}?token=${encodeURIComponent(token.trim())}`);
-    wsRef.current = ws;
-    let opened = false;
-
-    ws.onopen = () => {
-      opened = true;
-      setScreen("lobby");
-    };
-    ws.onmessage = (e) => {
-      try {
-        const m = JSON.parse(e.data);
-        handleMessage(m.type, m.payload ?? {});
-      } catch (err) {
-        console.error(err);
-      }
-    };
-    ws.onerror = () => {
-      if (!opened) setError("Could not reach the server. Check the URL and that it is running.");
-    };
-    ws.onclose = () => {
-      if (wsRef.current !== ws) return;
-      wsRef.current = null;
-      gameIdRef.current = null;
-      clearTimers();
-      setFinished(null);
-      setScreen("connect");
-      if (opened) setError((prev) => prev || "Disconnected from the server.");
-    };
-  };
-
-  const disconnect = () => wsRef.current?.close();
-
   const submit = (raw: string) => {
     const value = raw.trim();
     const q = questionRef.current;
+    const ws = wsRef.current;
     if (lockedRef.current || overRef.current || !q || !gameIdRef.current || !value) return;
     if (Date.now() >= endsAtRef.current) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     lockedRef.current = true;
     setLocked(true);
     setError("");
-    send("SUBMIT_ANSWER", {
-      gameId: gameIdRef.current,
-      questionId: q.id,
-      answer: parseAnswer(value),
-    });
+    ws.send(
+      JSON.stringify({
+        type: "SUBMIT_ANSWER",
+        payload: {
+          gameId: gameIdRef.current,
+          questionId: q.id,
+          answer: parseAnswer(value),
+        },
+      }),
+    );
   };
 
   /* Auto-submit as soon as the typed text matches the question's answer */
@@ -280,14 +294,11 @@ export default function Page() {
     }
   };
 
-  const backToLobby = () => {
-    clearTimers();
-    setFinished(null);
-    setError("");
-    setScreen("lobby");
+  const leave = () => {
+    wsRef.current?.close();
+    router.push("/");
   };
 
-  /* Field names depend on generateQuestions() */
   const q = question;
   const text = q ? (q.question ?? q.text ?? q.prompt ?? q.title ?? "") : "";
   const extra = q ? (q.grid ?? q.board ?? q.data ?? null) : null;
@@ -296,92 +307,33 @@ export default function Page() {
   return (
     <main className="flex min-h-screen justify-center bg-slate-100 px-4 py-6 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <div className="w-full max-w-xl">
-        <h1 className="mb-1 text-4xl font-extrabold tracking-tight">Quiz Duel</h1>
-        <p className="mb-5 text-slate-500">One minute. Most correct answers wins.</p>
+        <div className="mb-4 flex items-center justify-between">
+          <h1 className="text-3xl font-extrabold tracking-tight">Math Duel</h1>
+          <button className={btnGhost} onClick={leave}>
+            Leave
+          </button>
+        </div>
 
-        {screen === "connect" && (
+        {status === "connecting" && (
           <section className={card}>
-            <h2 className="mb-3 text-xl font-semibold">Connect</h2>
-            <label htmlFor="url" className="mb-1 mt-3 block text-sm text-slate-500">
-              Server URL
-            </label>
-            <input id="url" className={input} value={url} onChange={(e) => setUrl(e.target.value)} />
-            <label htmlFor="token" className="mb-1 mt-3 block text-sm text-slate-500">
-              Login token (JWT)
-            </label>
-            <input
-              id="token"
-              type="password"
-              className={input}
-              value={token}
-              placeholder="Paste your token"
-              onChange={(e) => setToken(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && connect()}
-            />
-            <div className="mt-4 flex justify-end">
-              <button className={btn} onClick={connect}>
-                Connect
-              </button>
-            </div>
+            <h2 className="animate-pulse text-xl font-semibold">Connecting…</h2>
           </section>
         )}
 
-        {screen === "lobby" && (
-          <section className={card}>
-            <div className="mb-4 flex items-center justify-between">
-              <span className="flex items-center gap-2 text-sm text-slate-500">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Connected
-              </span>
-              <button className={btnGhost} onClick={disconnect}>
-                Disconnect
-              </button>
-            </div>
-            <h2 className="mb-3 text-xl font-semibold">Players online</h2>
-            <ul className="flex flex-wrap gap-2">
-              {users.length === 0 && <li className="text-sm text-slate-500">Nobody yet</li>}
-              {users.map((u) => (
-                <li key={u.id} className="rounded-full border border-slate-300 px-3 py-1 text-sm dark:border-slate-600">
-                  {u.name || "Player"}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-5">
-              <button
-                className={btn}
-                onClick={() => {
-                  setError("");
-                  send("PLAY_GAME");
-                }}
-              >
-                Find a match
-              </button>
-            </div>
-          </section>
-        )}
-
-        {screen === "search" && (
+        {status === "searching" && (
           <section className={card}>
             <h2 className="mb-2 animate-pulse text-xl font-semibold">Looking for an opponent…</h2>
-            <p className="mb-4 text-slate-500">
-              The game starts as soon as another player joins. Disconnect to cancel.
-            </p>
-            <button className={btnGhost} onClick={disconnect}>
-              Disconnect
-            </button>
+            <p className="text-slate-500">Game ID: {gameId === "new" ? "assigning…" : gameId}</p>
           </section>
         )}
 
-        {screen === "game" && q && (
+        {status === "playing" && q && (
           <section className={card}>
             <div className="mb-2 flex items-center justify-between">
               <span>
                 Score: <strong>{score}</strong>
               </span>
-              <span
-                className={`text-3xl font-extrabold tabular-nums ${low ? "text-red-500" : ""}`}
-                aria-live="off"
-              >
+              <span className={`text-3xl font-extrabold tabular-nums ${low ? "text-red-500" : ""}`}>
                 {clock(timeLeft)}
               </span>
             </div>
@@ -468,7 +420,7 @@ export default function Page() {
               )}
             </div>
 
-            <button className={btn} onClick={backToLobby}>
+            <button className={btn} onClick={leave}>
               Back to lobby
             </button>
           </div>

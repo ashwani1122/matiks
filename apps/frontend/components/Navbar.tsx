@@ -1,3 +1,4 @@
+
 "use client";
 
 import Image from "next/image";
@@ -10,22 +11,31 @@ export default function Navbar() {
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if(token){
-    setIsLoggedIn(true)
+    useEffect(() => {
+      function checkAuth() {
+        const storedToken = localStorage.getItem("token");
+
+        setIsLoggedIn(!!storedToken);
+      }
+
+      checkAuth();
+
+      window.addEventListener("auth-change", checkAuth);
+
+      return () => {
+        window.removeEventListener("auth-change", checkAuth);
+      };
+    }, []);
+      function handleLogout() {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+
+      setIsLoggedIn(false);
+
+      window.dispatchEvent(new Event("auth-change"));
+
+      router.push("/auth/login");
     }
-    // ();
-  }, []);
-
-  function handleLogout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-
-    setIsLoggedIn(false);
-
-    router.push("/auth/login");
-  }
 
   return (
     <nav className="flex h-16 items-center justify-between border-b border-zinc-800 bg-black px-6 text-white">
@@ -70,3 +80,6 @@ export default function Navbar() {
     </nav>
   );
 }
+
+
+

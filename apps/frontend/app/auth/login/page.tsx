@@ -58,12 +58,10 @@ export default function LoginPage() {
 
       // Save JWT
       localStorage.setItem("token", token);
-
-      // Save user information
-    //   localStorage.setItem("user", JSON.stringify(user));
-
+      localStorage.setItem("user" , JSON.stringify(user));
+      window.dispatchEvent(new Event("auth-change"));
       setMessage("Login successful!");
-
+      
       // Go to home page
       router.push("/");
     } catch (error) {

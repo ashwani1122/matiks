@@ -28,8 +28,7 @@ type Game = {
 };
 
 export default function Games() {
-
-   const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(null);
 
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
 
@@ -40,9 +39,7 @@ export default function Games() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
-
-
-useEffect(() => {
+  useEffect(() => {
     if (!user) return;
 
     const token = localStorage.getItem("token");
@@ -50,7 +47,7 @@ useEffect(() => {
     if (!token) return;
 
     const ws = new WebSocket(
-      `ws://localhost:8080?token=${encodeURIComponent(token)}`
+      `ws://localhost:8080?token=${encodeURIComponent(token)}`,
     );
 
     wsRef.current = ws;
@@ -69,13 +66,12 @@ useEffect(() => {
           ([id, onlineUser]: [string, OnlineUser]) => ({
             id,
             name: onlineUser.name,
-          })
+          }),
         );
 
         setOnlineUsers(users);
         return;
       }
-
 
       if (data.type === "GAME_ACCEPTED") {
         const gameData: Game = {
@@ -126,9 +122,8 @@ useEffect(() => {
       wsRef.current = null;
     };
   }, [user]);
-  
-  
-    function handlePlayGame() {
+
+  function handlePlayGame() {
     const ws = wsRef.current;
 
     if (!ws) {
@@ -145,7 +140,7 @@ useEffect(() => {
       JSON.stringify({
         type: "PLAY_GAME",
         payload: {},
-      })
+      }),
     );
 
     console.log("PLAY_GAME sent");
@@ -182,24 +177,26 @@ useEffect(() => {
           const isActive = activeGame === gm.title;
 
           return (
-            <div  className="gap-20 sm:gap-5 px-4 flex flex-col  items-center justify-center" >
-            <button
-              key={gm.title}
-              onClick={() => setActiveGame(gm.title)}
-              className={`
+            <div className="gap-20 sm:gap-5 px-4 flex flex-col  items-center justify-center">
+              <button
+                key={gm.title}
+                onClick={() => setActiveGame(gm.title)}
+                className={`
                 flex h-40 w-40 items-center justify-center
                 rounded-2xl text-white
                 transition-all duration-200
                 ${isActive ? gm.activeColor : "bg-slate-900"}
                 ${isActive ? "scale-105" : "scale-100"}
               `}
-            >
-              <p className="text-2xl font-bold">
-                {gm.title}
-              </p>
-              
-            </button>
-            <button  onClick={handlePlayGame} className="bg-cyan-700 px-10 rounded py-2  text-xl cursor-pointer hover:border-2 border-white active:scale-90 ">play</button>
+              >
+                <p className="text-2xl font-bold">{gm.title}</p>
+              </button>
+              <button
+                onClick={handlePlayGame}
+                className="bg-cyan-700 px-10 rounded py-2  text-xl cursor-pointer hover:border-2 border-white active:scale-90 "
+              >
+                play
+              </button>
             </div>
           );
         })}
