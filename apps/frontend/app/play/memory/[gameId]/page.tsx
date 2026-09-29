@@ -54,7 +54,6 @@ const Cell = memo(function Cell({
   delay,
   clickable,
   instant,
-  showingPattern,
   onClick,
 }: {
   index: number;
@@ -62,13 +61,10 @@ const Cell = memo(function Cell({
   backClass: string;
   delay: number;
   clickable: boolean;
-
-  // During the remember phase, show the green cell directly.
+  /* true while the pattern is being shown at the start of a round: the
+     cell should just display its color, with no 3D flip animation.
+     false during play, where a click should flip the card over. */
   instant: boolean;
-
-  // True while showing the pattern to remember.
-  showingPattern: boolean;
-
   onClick: (index: number) => void;
 }) {
   const face: React.CSSProperties = {
@@ -86,35 +82,17 @@ const Cell = memo(function Cell({
         }`}
         style={{
           transformStyle: "preserve-3d",
-
-          // No animation while showing the pattern.
           transition: instant ? "none" : "transform 500ms ease-in-out",
-
           transitionDelay: instant ? "0ms" : `${delay}ms`,
-
-          // IMPORTANT:
-          // During SHOWING, directly show the green side.
-          // During PLAYING, use flipped state.
-          transform: showingPattern
-            ? "rotateY(180deg)"
-            : flipped
-              ? "rotateY(180deg)"
-              : "rotateY(0deg)",
+          transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
         }}
       >
-        {/* Front: hidden/white state */}
-        <span
-          className="absolute inset-0 rounded-xl bg-white"
-          style={face}
-        />
-
+        {/* Front: hidden state */}
+        <span className="absolute inset-0 rounded-xl bg-white" style={face} />
         {/* Back: revealed colour */}
         <span
           className={`absolute inset-0 rounded-xl ${backClass}`}
-          style={{
-            ...face,
-            transform: "rotateY(180deg)",
-          }}
+          style={{ ...face, transform: "rotateY(180deg)" }}
         />
       </button>
     </div>
@@ -523,7 +501,7 @@ export default function MemoryGamePage() {
   /* ------------------------------------------------------------------ */
 
   const flipped = useMemo(
-    () => cells.map((state, i) => state !== "normal"),
+    () => cells.map((state, i) => state !== "normal" || (reveal && flatPattern[i] === "on")),
     [cells, reveal, flatPattern],
   );
 
@@ -615,17 +593,16 @@ export default function MemoryGamePage() {
                   style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                 >
                   {cells.map((_, index) => (
-                   <Cell
-                    key={index}
-                    index={index}
-                    flipped={flipped[index]}
-                    backClass={backClasses[index]}
-                    delay={reveal ? index * 30 : 0}
-                    clickable={phase === "PLAYING"}
-                    instant={reveal}
-                    showingPattern={phase === "SHOWING" && reveal}
-                    onClick={handleCellClick}
-/>
+                    <Cell
+                      key={index}
+                      index={index}
+                      flipped={flipped[index]}
+                      backClass={backClasses[index]}
+                      delay={reveal ? index * 30 : 0}
+                      clickable={phase === "PLAYING"}
+                      instant={reveal}
+                      onClick={handleCellClick}
+                    />
                   ))}
                 </div>
 
