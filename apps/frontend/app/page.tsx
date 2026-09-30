@@ -33,15 +33,23 @@ type OnlineUser = {
 
 type LeaderboardUser = {
   rank: number;
-  name: string;
-  score: number;
+  user: {
+    id: string;
+    username: string;
+  };
+  rating: number;
+  gamesPlayed: number;
+  wins: number;
+  losses: number;
+  totalScore: number;
+  correctAnswers: number;
 };
 
 const WS_URL =
   process.env.NEXT_PUBLIC_MATH_WS_URL ?? "ws://localhost:8080";
 
 const HTTP_URL =
-  process.env.NEXT_PUBLIC_HTTP_URL ?? "http://localhost:4000";
+  process.env.NEXT_PUBLIC_HTTP_URL ?? "http://localhost:4000/api/vi";
 
 export default function Page() {
   const router = useRouter();
@@ -101,36 +109,54 @@ export default function Page() {
 
   // Fetch leaderboard
   useEffect(() => {
-    const fetchLeaderboard = async () => {
-      try {
-        setLeaderboardLoading(true);
+  const fetchLeaderboard = async () => {
+    try {
+      setLeaderboardLoading(true);
 
-        const response = await fetch(
-          `${HTTP_URL}/api/v1/leaderboard/math`
+      const response = await fetch(
+        `${HTTP_URL}/api/v1/leaderboard/math`
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Leaderboard request failed: ${response.status}`
         );
-
-        if (!response.ok) {
-          throw new Error(
-            `Leaderboard request failed: ${response.status}`
-          );
-        }
-
-        const data = await response.json();
-                 setLeaderboard(
-          Array.isArray(data)
-            ? data
-            : data.leaderboard ?? []
-        );
-      } catch (error) {
-        console.error("Failed to fetch leaderboard:", error);
-        setLeaderboard([]);
-      } finally {
-        setLeaderboardLoading(false);
       }
-    };
 
-    fetchLeaderboard();
-  }, []);
+      const responseData = await response.json();
+
+      console.log("🏆 Leaderboard API:", responseData);
+
+      const players = responseData?.data?.leaderboard ?? [];
+
+      setLeaderboard(
+        players.map(
+          (
+            player: {
+              user: {
+                id: string;
+                username: string;
+              };
+              totalScore: number;
+            },
+            index: number
+          ) => ({
+            rank: index + 1,
+            name: player.user.username,
+            score: player.totalScore,
+          })
+        )
+      );
+    } catch (error) {
+      console.error("Failed to fetch leaderboard:", error);
+      setLeaderboard([]);
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  };
+
+  fetchLeaderboard();
+}, []);
 
   const play = (slug: string) => {
     if (!signedIn) return;
@@ -257,55 +283,52 @@ export default function Page() {
               </div>
             ) : (
               <div className="divide-y divide-white/5">
-                {leaderboard.slice(0, 10).map((player, index) => {
-                  const rank = player.rank ?? index + 1;
-
-                  return (
-                    <div
-                      key={`${player.name}-${rank}`}
-                      className="group flex items-center justify-between px-5 py-4 transition hover:bg-white/[0.04] sm:px-6"
-                    >
+                {leaderboard.slice(0, 10).map((player) => (
+                  <div
+                    key={player.user.id}
+                    className="px-5 py-5 transition hover:bg-white/[0.04] sm:px-6"
+                  >
+                    {/* Main row */}
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         {/* Rank */}
-                        <div className="flex h-9 w-9 items-center justify-center">
-                          {rank === 1 ? (
+                        <div className="flex h-10 w-10 items-center justify-center">
+                          {player.rank === 1 ? (
                             <span className="text-2xl">🥇</span>
-                          ) : rank === 2 ? (
+                          ) : player.rank === 2 ? (
                             <span className="text-2xl">🥈</span>
-                          ) : rank === 3 ? (
+                          ) : player.rank === 3 ? (
                             <span className="text-2xl">🥉</span>
                           ) : (
                             <span className="text-sm font-bold text-slate-500">
-                              #{rank}
+                              #{player.rank}
                             </span>
                           )}
                         </div>
 
                         {/* Avatar */}
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-blue-500 to-violet-600 text-xs font-black">
-                          {player.name
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-blue-500 to-violet-600 text-xs font-black">
+                          {player?.user?.username
                             .slice(0, 2)
                             .toUpperCase()}
                         </div>
 
-                        {/* Name */}
+                        {/* User */}
                         <div>
                           <p className="text-sm font-bold text-white">
-                            {player.name}
+                            {player.user.username}
                           </p>
 
-                          {rank <= 3 && (
-                            <p className="text-xs text-slate-500">
-                              Top player
-                            </p>
-                          )}
+                          <p className="text-xs text-slate-500">
+                            Rating {player.rating}
+                          </p>
                         </div>
                       </div>
 
-                      {/* Score */}
+                      {/* Total score */}
                       <div className="text-right">
                         <p className="text-lg font-black text-white">
-                          {player.score.toLocaleString()}
+                          {player.totalScore.toLocaleString()}
                         </p>
 
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
@@ -313,8 +336,55 @@ export default function Page() {
                         </p>
                       </div>
                     </div>
-                  );
-                })}
+
+                    {/* Player stats */}
+                    <div className="mt-4 grid grid-cols-4 gap-2">
+                      {/* Games */}
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                          Games
+                        </p>
+
+                        <p className="mt-1 text-sm font-bold text-white">
+                          {player.gamesPlayed}
+                        </p>
+                      </div>
+
+                      {/* Wins */}
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                          Wins
+                        </p>
+
+                        <p className="mt-1 text-sm font-bold text-emerald-400">
+                          {player.wins}
+                        </p>
+                      </div>
+
+                      {/* Losses */}
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                          Losses
+                        </p>
+
+                        <p className="mt-1 text-sm font-bold text-red-400">
+                          {player.losses}
+                        </p>
+                      </div>
+
+                      {/* Correct answers */}
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                          Correct
+                        </p>
+
+                        <p className="mt-1 text-sm font-bold text-amber-400">
+                          {player.correctAnswers}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
