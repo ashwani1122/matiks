@@ -1,6 +1,14 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
 import { useParams, useRouter } from "next/navigation";
 
 type CellState = "normal" | "correct" | "wrong";
@@ -20,32 +28,30 @@ type GamePhase =
   | "SUBMITTING"
   | "COMPLETED";
 
-type OnlineUser = { id: string; name: string };
-
-const WS_URL = process.env.NEXT_PUBLIC_MEMORY_WS_URL ?? "ws://localhost:8081";
-
-/* Phases where the board (scoreboard + grid) is on screen.
-   INTRO is included on purpose so the board never unmounts between questions. */
-const BOARD_PHASES: GamePhase[] = ["INTRO", "SHOWING", "PLAYING", "SUBMITTING"];
-
-const btn =
-  "rounded-xl bg-amber-400 px-5 py-3 font-semibold text-slate-900 hover:bg-amber-300 disabled:opacity-50";
-const btnGhost =
-  "rounded-xl border border-white/20 px-5 py-3 font-semibold hover:bg-white/10";
-
-/* Updates the URL bar without going through Next's router. router.replace /
-   router.push navigate the [gameId] route, which remounts this page (a new
-   dynamic-segment value is a different route match), which would tear the
-   socket down and reconnect it. history.replaceState only touches the
-   address bar. */
-const setUrlSilently = (path: string) => {
-  if (typeof window !== "undefined") window.history.replaceState(null, "", path);
+type OnlineUser = {
+  id: string;
+  name: string;
 };
 
-/* ------------------------------------------------------------------ */
-/* Small memoised components: they only re-render when their props    */
-/* change, so a timer tick doesn't repaint the whole grid.             */
-/* ------------------------------------------------------------------ */
+const WS_URL =
+  process.env.NEXT_PUBLIC_MEMORY_WS_URL ?? "ws://localhost:8081";
+
+const BOARD_PHASES: GamePhase[] = [
+  "INTRO",
+  "SHOWING",
+  "PLAYING",
+  "SUBMITTING",
+];
+
+const setUrlSilently = (path: string) => {
+  if (typeof window !== "undefined") {
+    window.history.replaceState(null, "", path);
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/* Cell                                                                       */
+/* -------------------------------------------------------------------------- */
 
 const Cell = memo(function Cell({
   index,
@@ -61,9 +67,6 @@ const Cell = memo(function Cell({
   backClass: string;
   delay: number;
   clickable: boolean;
-  /* true while the pattern is being shown at the start of a round: the
-     cell should just display its color, with no 3D flip animation.
-     false during play, where a click should flip the card over. */
   instant: boolean;
   onClick: (index: number) => void;
 }) {
@@ -73,31 +76,54 @@ const Cell = memo(function Cell({
   };
 
   return (
-    <div className="w-20 aspect-square" style={{ perspective: 600 }}>
+    <div
+      className="aspect-square w-[64px] sm:w-[76px]"
+      style={{ perspective: 700 }}
+    >
       <button
         onClick={() => onClick(index)}
         disabled={!clickable}
-        className={`relative h-full w-full ${
-          clickable ? "cursor-pointer" : "cursor-default"
+        aria-label={`Memory cell ${index + 1}`}
+        className={`relative h-full w-full rounded-2xl ${
+          clickable
+            ? "cursor-pointer active:scale-95"
+            : "cursor-default"
         }`}
         style={{
           transformStyle: "preserve-3d",
-          transition: instant ? "none" : "transform 500ms ease-in-out",
+          transition: instant
+            ? "none"
+            : "transform 450ms cubic-bezier(.2,.8,.2,1)",
           transitionDelay: instant ? "0ms" : `${delay}ms`,
           transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
         }}
       >
-        {/* Front: hidden state */}
-        <span className="absolute inset-0 rounded-xl bg-white" style={face} />
-        {/* Back: revealed colour */}
+        {/* Hidden side */}
         <span
-          className={`absolute inset-0 rounded-xl ${backClass}`}
-          style={{ ...face, transform: "rotateY(180deg)" }}
-        />
+          className="absolute inset-0 rounded-2xl border border-white/10 bg-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,.08)]"
+          style={face}
+        >
+          <span className="absolute inset-[6px] rounded-xl border border-white/[0.06]" />
+        </span>
+
+        {/* Revealed side */}
+        <span
+          className={`absolute inset-0 rounded-2xl ${backClass} shadow-lg`}
+          style={{
+            ...face,
+            transform: "rotateY(180deg)",
+          }}
+        >
+          <span className="absolute inset-0 rounded-2xl bg-white/10" />
+        </span>
       </button>
     </div>
   );
 });
+
+/* -------------------------------------------------------------------------- */
+/* Player                                                                     */
+/* -------------------------------------------------------------------------- */
 
 const Player = memo(function Player({
   name,
@@ -110,20 +136,38 @@ const Player = memo(function Player({
   score: number;
   me?: boolean;
 }) {
+  const initials = name
+    ? name.slice(0, 2).toUpperCase()
+    : fallback.slice(0, 2).toUpperCase();
+
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex min-w-0 items-center gap-3">
       <div
-        className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold uppercase ${
-          me ? "bg-white text-black" : "bg-black/30"
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-black ${
+          me
+            ? "bg-white text-slate-950 shadow-lg shadow-white/10"
+            : "border border-white/10 bg-white/[0.08] text-white"
         }`}
       >
-        {name ? name.slice(0, 2) : "??"}
+        {initials}
       </div>
-      <p className="mt-1 max-w-24 truncate text-xs text-zinc-200">{name || fallback}</p>
-      <p className="text-2xl font-black">{score}</p>
+
+      <div className="min-w-0">
+        <p className="max-w-[110px] truncate text-xs font-medium text-white/50">
+          {name || fallback}
+        </p>
+
+        <p className="text-2xl font-black leading-none tracking-tight">
+          {score}
+        </p>
+      </div>
     </div>
   );
 });
+
+/* -------------------------------------------------------------------------- */
+/* Main                                                                       */
+/* -------------------------------------------------------------------------- */
 
 export default function MemoryGamePage() {
   const router = useRouter();
@@ -132,30 +176,40 @@ export default function MemoryGamePage() {
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const gameIdRef = useRef<string>("");
+
+  const gameIdRef = useRef("");
   const triedCreateRef = useRef(false);
   const joinSentRef = useRef(false);
 
   const [question, setQuestion] = useState<Question | null>(null);
   const [cells, setCells] = useState<CellState[]>([]);
   const [reveal, setReveal] = useState(false);
+
   const [phase, setPhase] = useState<GamePhase>("CONNECTING");
+
   const [score1, setScore1] = useState(0);
   const [score2, setScore2] = useState(0);
+
   const [user1, setUser1] = useState("");
   const [user2, setUser2] = useState("");
+
   const [questionNumber, setQuestionNumber] = useState(1);
   const [timer, setTimer] = useState(60);
+
   const [end, setEnd] = useState(false);
   const [message, setMessage] = useState("Connecting...");
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
 
-  const flatPattern = useMemo(() => (question ? question.pattern.flat() : []), [question]);
+  const flatPattern = useMemo(
+    () => (question ? question.pattern.flat() : []),
+    [question],
+  );
+
   const columns = question?.pattern[0]?.length ?? 4;
 
-  /* ------------------------------------------------------------------ */
-  /* Timers                                                              */
-  /* ------------------------------------------------------------------ */
+  /* ---------------------------------------------------------------------- */
+  /* Timers                                                                 */
+  /* ---------------------------------------------------------------------- */
 
   const clearGameTimer = useCallback(() => {
     if (timerRef.current) {
@@ -199,6 +253,7 @@ export default function MemoryGamePage() {
   const startQuestionIntro = useCallback(
     (pattern: string[][]) => {
       clearGameTimer();
+
       setPhase("INTRO");
       setMessage("");
 
@@ -209,9 +264,9 @@ export default function MemoryGamePage() {
     [clearGameTimer, startShowingPattern],
   );
 
-  /* ------------------------------------------------------------------ */
-  /* WebSocket                                                           */
-  /* ------------------------------------------------------------------ */
+  /* ---------------------------------------------------------------------- */
+  /* WebSocket                                                              */
+  /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
     let cancelled = false;
@@ -233,7 +288,10 @@ export default function MemoryGamePage() {
       return;
     }
 
-    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
+    const ws = new WebSocket(
+      `${WS_URL}?token=${encodeURIComponent(token)}`,
+    );
+
     wsRef.current = ws;
 
     const send = (type: string, payload: unknown = {}) => {
@@ -241,22 +299,28 @@ export default function MemoryGamePage() {
 
       if (ws.readyState === WebSocket.OPEN) {
         console.log("📤 Sending:", type);
-        ws.send(JSON.stringify({ type, payload }));
-      } else {
-        console.warn("⚠️ Cannot send. Socket state:", ws.readyState);
+
+        ws.send(
+          JSON.stringify({
+            type,
+            payload,
+          }),
+        );
       }
     };
 
     ws.onopen = () => {
       if (cancelled) return;
+
       console.log("🟢 WebSocket OPEN");
+
       setPhase("MATCHING");
       setMessage("Finding a game...");
-      // JOIN is sent once ONLINE_USER arrives, see onmessage below.
     };
 
     ws.onerror = (event) => {
       if (cancelled) return;
+
       console.error("❌ WebSocket ERROR", event);
       setMessage("WebSocket error");
     };
@@ -271,9 +335,14 @@ export default function MemoryGamePage() {
 
       if (cancelled) return;
 
-      if (wsRef.current === ws) wsRef.current = null;
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
 
-      setPhase((p) => (p === "COMPLETED" ? p : "CONNECTING"));
+      setPhase((p) =>
+        p === "COMPLETED" ? p : "CONNECTING",
+      );
+
       setMessage("Disconnected");
     };
 
@@ -281,6 +350,7 @@ export default function MemoryGamePage() {
       if (cancelled) return;
 
       let data;
+
       try {
         data = JSON.parse(event.data);
       } catch {
@@ -288,128 +358,216 @@ export default function MemoryGamePage() {
         return;
       }
 
-      console.log("📩 Received:", data.type, data.payload);
+      console.log(
+        "📩 Received:",
+        data.type,
+        data.payload,
+      );
 
       switch (data.type) {
         case "ONLINE_USER": {
-          setOnlineUsers(data.payload.users);
+          setOnlineUsers(data.payload.users ?? []);
 
-          /* Server sends ONLINE_USER first, right after auth. Wait for it
-             before sending JOIN so we know the connection is fully live. */
           if (!joinSentRef.current) {
             joinSentRef.current = true;
-            console.log("📤 Sending JOIN after ONLINE_USER");
+
+            console.log(
+              "📤 Sending JOIN after ONLINE_USER",
+            );
+
             send("JOIN", {});
           }
+
           break;
         }
 
         case "ERROR": {
-          if (!triedCreateRef.current && /no open game/i.test(data.payload?.message ?? "")) {
+          if (
+            !triedCreateRef.current &&
+            /no open game/i.test(
+              data.payload?.message ?? "",
+            )
+          ) {
             triedCreateRef.current = true;
-            console.log("🎮 No open game → creating game");
+
+            console.log(
+              "🎮 No open game → creating game",
+            );
+
             send("CREATE");
+
             return;
           }
 
-          setMessage(data.payload?.message ?? "Something went wrong.");
+          setMessage(
+            data.payload?.message ??
+              "Something went wrong.",
+          );
+
           break;
         }
 
         case "GAME_CREATED": {
-          gameIdRef.current = data.payload.gameId;
-          console.log("🎮 Game created:", data.payload.gameId);
+          gameIdRef.current =
+            data.payload.gameId;
 
-          /* Reflect the id in the URL without navigating — router.replace
-             would remount this page (dynamic segment changed), tearing the
-             socket down and reconnecting it, which retriggers JOIN against
-             the game we just made and starts the whole thing over. */
-          setUrlSilently(`/play/memory/${data.payload.gameId}`);
+          console.log(
+            "🎮 Game created:",
+            data.payload.gameId,
+          );
+
+          setUrlSilently(
+            `/play/memory/${data.payload.gameId}`,
+          );
 
           setPhase("WAITING");
-          setMessage("Waiting for another player...");
+          setMessage(
+            "Waiting for another player...",
+          );
+
           break;
         }
 
         case "QUESTION": {
-          const [questionId, pattern] = data.payload.question;
-          const { member, endTime, runningGameId } = data.payload;
+          const [questionId, pattern] =
+            data.payload.question;
 
-          const me = member.find((m: any) => m.id === storedUser?.id);
-          const other = member.find((m: any) => m.id !== storedUser?.id);
+          const {
+            member,
+            endTime,
+            runningGameId,
+          } = data.payload;
+
+          const me = member.find(
+            (m: any) =>
+              m.id === storedUser?.id,
+          );
+
+          const other = member.find(
+            (m: any) =>
+              m.id !== storedUser?.id,
+          );
 
           setUser1(me?.name ?? "");
           setUser2(other?.name ?? "");
-          gameIdRef.current = runningGameId;
 
-          /* Safe to call again here: it's the same silent URL update, not
-             a router navigation, so it never remounts the page. This is
-             what actually gives the joiner (who never saw GAME_CREATED)
-             the real id in their address bar. */
-          setUrlSilently(`/play/memory/${runningGameId}`);
+          gameIdRef.current =
+            runningGameId;
+
+          setUrlSilently(
+            `/play/memory/${runningGameId}`,
+          );
 
           clearCountdown();
-          countdownRef.current = setInterval(() => {
-            const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-            setTimer(remaining);
 
-            if (remaining <= 0) {
-              clearCountdown();
-              setEnd(true);
-              setPhase("COMPLETED");
-            }
-          }, 250);
+          countdownRef.current =
+            setInterval(() => {
+              const remaining = Math.max(
+                0,
+                Math.ceil(
+                  (endTime - Date.now()) /
+                    1000,
+                ),
+              );
 
-          setQuestion({ id: questionId, pattern });
+              setTimer(remaining);
+
+              if (remaining <= 0) {
+                clearCountdown();
+                setEnd(true);
+                setPhase("COMPLETED");
+              }
+            }, 250);
+
+          setQuestion({
+            id: questionId,
+            pattern,
+          });
+
           setQuestionNumber(1);
+
           startShowingPattern(pattern);
+
           break;
         }
 
         case "NEXT_QUESTION": {
-          const pattern = data.payload.question;
+          const pattern =
+            data.payload.question;
 
-          setQuestion({ id: data.payload.questionId, pattern });
-          setCells(Array(pattern.flat().length).fill("normal"));
-          setQuestionNumber((n) => n + 1);
+          setQuestion({
+            id: data.payload.questionId,
+            pattern,
+          });
+
+          setCells(
+            Array(pattern.flat().length).fill(
+              "normal",
+            ),
+          );
+
+          setQuestionNumber(
+            (n) => n + 1,
+          );
+
           startQuestionIntro(pattern);
+
           break;
         }
 
         case "SCORE_UPDATE": {
-          const { myScore, opponent } = data.payload;
-          setScore1(myScore.score);
-          setScore2(opponent?.score ?? 0);
+          const {
+            myScore,
+            opponent,
+          } = data.payload;
+
+          setScore1(myScore?.score ?? 0);
+          setScore2(
+            opponent?.score ?? 0,
+          );
+
           break;
         }
 
         case "TIME_UP": {
           clearCountdown();
+
           setTimer(0);
           setEnd(true);
           setPhase("COMPLETED");
+
           break;
         }
 
         case "GAME_COMPLETED": {
           clearGameTimer();
+
           setPhase("COMPLETED");
           setMessage("Game completed!");
+
           break;
         }
 
         case "ANSWER_RESULT": {
-          if (data.payload?.correct === false) {
+          if (
+            data.payload?.correct === false
+          ) {
             setPhase("PLAYING");
-            setMessage("Some boxes were incorrect. Try again.");
+            setMessage(
+              "Some boxes were incorrect. Try again.",
+            );
           }
+
           break;
         }
       }
     };
 
     return () => {
-      console.log("🧹 Cleaning WebSocket effect");
+      console.log(
+        "🧹 Cleaning WebSocket effect",
+      );
+
       cancelled = true;
 
       clearGameTimer();
@@ -417,226 +575,633 @@ export default function MemoryGamePage() {
 
       if (wsRef.current === ws) {
         wsRef.current = null;
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          console.log("🔌 Closing current socket");
+
+        if (
+          ws.readyState ===
+            WebSocket.OPEN ||
+          ws.readyState ===
+            WebSocket.CONNECTING
+        ) {
+          console.log(
+            "🔌 Closing current socket",
+          );
+
           ws.close();
         }
       }
     };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ------------------------------------------------------------------ */
-  /* Actions                                                             */
-  /* ------------------------------------------------------------------ */
+  /* ---------------------------------------------------------------------- */
+  /* Submit answer                                                          */
+  /* ---------------------------------------------------------------------- */
 
-  const submitAnswer = useCallback((selected: CellState[]) => {
-    const ws = wsRef.current;
-    const q = question;
-    if (!ws || !q || !gameIdRef.current) return;
+  const submitAnswer = useCallback(
+    (selected: CellState[]) => {
+      const ws = wsRef.current;
+      const q = question;
 
-    const flat = selected.map((c) => (c === "correct" ? "on" : "off"));
-    const cols = q.pattern[0].length;
-    const answer: string[][] = [];
+      if (
+        !ws ||
+        !q ||
+        !gameIdRef.current
+      ) {
+        return;
+      }
 
-    for (let i = 0; i < flat.length; i += cols) {
-      answer.push(flat.slice(i, i + cols));
-    }
+      const flat = selected.map(
+        (c) =>
+          c === "correct"
+            ? "on"
+            : "off",
+      );
 
-    ws.send(
-      JSON.stringify({
-        type: "SUBMIT",
-        payload: { questionId: q.id, gameId: gameIdRef.current, answer },
-      }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [question]);
+      const cols =
+        q.pattern[0].length;
+
+      const answer: string[][] = [];
+
+      for (
+        let i = 0;
+        i < flat.length;
+        i += cols
+      ) {
+        answer.push(
+          flat.slice(i, i + cols),
+        );
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: "SUBMIT",
+          payload: {
+            questionId: q.id,
+            gameId: gameIdRef.current,
+            answer,
+          },
+        }),
+      );
+    },
+    [question],
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Cell click                                                             */
+  /* ---------------------------------------------------------------------- */
 
   const handleCellClick = useCallback(
     (index: number) => {
-      if (phase !== "PLAYING" || !question) return;
-      if (cells[index] !== "normal") return;
+      if (
+        phase !== "PLAYING" ||
+        !question
+      ) {
+        return;
+      }
+
+      if (cells[index] !== "normal") {
+        return;
+      }
 
       const updated = [...cells];
 
-      if (flatPattern[index] === "on") {
+      if (
+        flatPattern[index] === "on"
+      ) {
         updated[index] = "correct";
+
         setCells(updated);
 
-        const totalOn = flatPattern.filter((v) => v === "on").length;
-        const selectedCorrect = updated.filter((v) => v === "correct").length;
+        const totalOn =
+          flatPattern.filter(
+            (v) => v === "on",
+          ).length;
 
-        if (selectedCorrect === totalOn) {
+        const selectedCorrect =
+          updated.filter(
+            (v) => v === "correct",
+          ).length;
+
+        if (
+          selectedCorrect ===
+          totalOn
+        ) {
           setPhase("SUBMITTING");
-          setMessage("Perfect! Checking answer...");
+
+          setMessage(
+            "Perfect! Checking answer...",
+          );
+
           submitAnswer(updated);
         }
+
         return;
       }
 
       updated[index] = "wrong";
+
       setCells(updated);
+
       setMessage("Wrong box!");
 
       setTimeout(() => {
         setCells((current) => {
-          if (current[index] !== "wrong") return current;
+          if (
+            current[index] !==
+            "wrong"
+          ) {
+            return current;
+          }
+
           const next = [...current];
+
           next[index] = "normal";
+
           return next;
         });
-        setMessage("Select the boxes you remember");
+
+        setMessage(
+          "Select the boxes you remember",
+        );
       }, 600);
     },
-    [phase, question, cells, flatPattern, submitAnswer],
+    [
+      phase,
+      question,
+      cells,
+      flatPattern,
+      submitAnswer,
+    ],
   );
+
+  /* ---------------------------------------------------------------------- */
+  /* Leave                                                                  */
+  /* ---------------------------------------------------------------------- */
 
   const leave = () => {
     wsRef.current?.close();
     router.push("/");
   };
 
-  /* ------------------------------------------------------------------ */
-  /* Derived values                                                      */
-  /* ------------------------------------------------------------------ */
+  /* ---------------------------------------------------------------------- */
+  /* Derived values                                                         */
+  /* ---------------------------------------------------------------------- */
 
   const flipped = useMemo(
-    () => cells.map((state, i) => state !== "normal" || (reveal && flatPattern[i] === "on")),
+    () =>
+      cells.map(
+        (state, i) =>
+          state !== "normal" ||
+          (reveal &&
+            flatPattern[i] === "on"),
+      ),
     [cells, reveal, flatPattern],
   );
 
   const backClasses = useMemo(
-    () => cells.map((state) => (state === "wrong" ? "bg-red-500" : "bg-green-500")),
+    () =>
+      cells.map((state) => {
+        if (state === "wrong") {
+          return "bg-gradient-to-br from-red-400 to-red-600";
+        }
+
+        return "bg-gradient-to-br from-emerald-300 to-emerald-600";
+      }),
     [cells],
   );
 
-  const result = score1 > score2 ? "WINNER" : score1 < score2 ? "LOST" : "DRAW";
+  const result =
+    score1 > score2
+      ? "WINNER"
+      : score1 < score2
+        ? "LOST"
+        : "DRAW";
 
-  const showBoard = BOARD_PHASES.includes(phase);
-  const isIntro = phase === "INTRO";
-  const isBusy = phase === "CONNECTING" || phase === "MATCHING" || phase === "WAITING";
+  const showBoard =
+    BOARD_PHASES.includes(phase);
 
-  /* ------------------------------------------------------------------ */
-  /* Render                                                              */
-  /* ------------------------------------------------------------------ */
+  const isIntro =
+    phase === "INTRO";
+
+  const isBusy =
+    phase === "CONNECTING" ||
+    phase === "MATCHING" ||
+    phase === "WAITING";
+
+  const timerDanger = timer <= 10;
+
+  const timerProgress =
+    Math.min(100, (timer / 60) * 100);
+
+  /* ---------------------------------------------------------------------- */
+  /* Render                                                                 */
+  /* ---------------------------------------------------------------------- */
 
   return (
-    <main className="min-h-screen text-white flex flex-col items-center px-4 bg-blue-700">
+    <main className="relative min-h-screen overflow-hidden bg-[#080b12] text-white">
+      {/* Background glow */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-32 -top-32 h-80 w-80 rounded-full bg-emerald-500/10 blur-[100px]" />
+        <div className="absolute -bottom-40 -right-32 h-96 w-96 rounded-full bg-blue-500/10 blur-[120px]" />
+      </div>
+
       {!end ? (
-        <div className="w-full max-w-lg mt-10">
-          <div className="mb-2 flex items-center justify-between">
-            <h1 className="text-2xl font-bold">Memory Grid</h1>
-            <button className={btnGhost} onClick={leave}>
+        <div className="relative mx-auto w-full max-w-2xl px-4 pb-10 pt-6 sm:pt-10">
+          {/* Header */}
+          <header className="mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] shadow-xl">
+                <span className="text-xl">🧠</span>
+              </div>
+
+              <div>
+                <h1 className="text-lg font-black tracking-tight sm:text-xl">
+                  Memory Grid
+                </h1>
+
+                <p className="text-xs text-white/40">
+                  Remember. React. Win.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={leave}
+              className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+            >
               Leave
             </button>
-          </div>
+          </header>
 
+          {/* Online users */}
           {onlineUsers.length > 0 && (
-            <p className="mb-4 text-xs text-white/50">{onlineUsers.length} players online</p>
-          )}
+            <div className="mb-5 flex items-center gap-2 overflow-hidden">
+              <div className="flex -space-x-2">
+                {onlineUsers
+                  .slice(0, 5)
+                  .map((user) => (
+                    <div
+                      key={user.id}
+                      title={user.name}
+                      className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#080b12] bg-slate-700 text-[9px] font-bold"
+                    >
+                      {user.name
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </div>
+                  ))}
+              </div>
 
-          {showBoard && (
-            <div className="text-center text-2xl font-bold flex items-end justify-center m-4">
-              Time left: {timer}
+              <span className="text-xs text-white/40">
+                {onlineUsers.length}{" "}
+                {onlineUsers.length === 1
+                  ? "player"
+                  : "players"}{" "}
+                online
+              </span>
             </div>
           )}
 
+          {/* Matching / waiting */}
           {isBusy && (
-            <div className="text-center">
-              <h2 className="text-3xl font-bold">
-                {phase === "WAITING" ? "Waiting for player" : "Connecting"}
-              </h2>
-
-              <div className="flex justify-center gap-2 mt-8">
-                {[0, 150, 300].map((delay) => (
-                  <span
-                    key={delay}
-                    className="w-3 h-3 bg-white rounded-full animate-bounce"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
+            <div className="flex min-h-[65vh] flex-col items-center justify-center text-center">
+              <div className="mb-8 flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/10 bg-white/[0.04] shadow-2xl">
+                <span className="text-5xl">
+                  {phase === "WAITING"
+                    ? "⏳"
+                    : "🧠"}
+                </span>
               </div>
 
-              <p className="text-gray-200 mt-6">{message}</p>
+              <h2 className="text-3xl font-black tracking-tight sm:text-4xl">
+                {phase === "WAITING"
+                  ? "Waiting for player"
+                  : phase === "MATCHING"
+                    ? "Finding opponent"
+                    : "Connecting"}
+              </h2>
+
+              <p className="mt-3 max-w-sm text-sm leading-6 text-white/40">
+                {phase === "WAITING"
+                  ? "Your game is ready. As soon as another player joins, the challenge begins."
+                  : "Get ready to test your memory against another player."}
+              </p>
+
+              <div className="mt-8 flex gap-2">
+                {[0, 150, 300].map(
+                  (delay) => (
+                    <span
+                      key={delay}
+                      className="h-2.5 w-2.5 animate-bounce rounded-full bg-emerald-400"
+                      style={{
+                        animationDelay: `${delay}ms`,
+                      }}
+                    />
+                  ),
+                )}
+              </div>
+
+              <p className="mt-6 text-xs text-white/30">
+                {message}
+              </p>
+
               {phase === "WAITING" && (
-                <p className="mt-2 text-xs text-white/40">Game ID: {gameIdRef.current || routeGameId}</p>
+                <p className="mt-2 rounded-lg bg-white/[0.03] px-3 py-2 font-mono text-[10px] text-white/20">
+                  {gameIdRef.current ||
+                    routeGameId}
+                </p>
               )}
             </div>
           )}
 
+          {/* Game */}
           {showBoard && (
             <>
-              <div className="mb-8 flex items-center justify-between rounded-2xl border border-white/10 bg-black/10 p-4">
-                <Player name={user1} fallback="You" score={score1} me />
-                <div className="text-xs font-bold text-white/40">VS</div>
-                <Player name={user2} fallback="Opponent" score={score2} />
-              </div>
-
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <p className="text-white/50 text-sm">QUESTION</p>
-                  <p className="text-2xl font-bold">{questionNumber}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-white/50 text-sm">SCORE</p>
-                  <p className="text-2xl font-bold">{score1}</p>
-                </div>
-              </div>
-
-              <div className="text-center mb-8 h-6">
-                <p className="text-white/70">{isIntro ? "Get ready" : message}</p>
-              </div>
-
-              <div className="relative mb-10">
+              {/* Timer */}
+              <div className="mb-5 flex flex-col items-center">
                 <div
-                  className={`grid gap-1 w-fit mx-auto ${isIntro ? "invisible" : ""}`}
-                  style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                  className={`flex items-center gap-2 rounded-full border px-5 py-2 ${
+                    timerDanger
+                      ? "border-red-400/30 bg-red-500/10 text-red-400"
+                      : "border-white/10 bg-white/[0.05] text-white"
+                  }`}
                 >
-                  {cells.map((_, index) => (
-                    <Cell
-                      key={index}
-                      index={index}
-                      flipped={flipped[index]}
-                      backClass={backClasses[index]}
-                      delay={reveal ? index * 30 : 0}
-                      clickable={phase === "PLAYING"}
-                      instant={reveal}
-                      onClick={handleCellClick}
-                    />
-                  ))}
+                  <span className="text-xs font-semibold uppercase tracking-widest opacity-50">
+                    Time
+                  </span>
+
+                  <span className="font-mono text-xl font-black tabular-nums">
+                    00:
+                    {String(timer).padStart(
+                      2,
+                      "0",
+                    )}
+                  </span>
                 </div>
 
+                <div className="mt-3 h-1 w-48 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      timerDanger
+                        ? "bg-red-500"
+                        : "bg-emerald-400"
+                    }`}
+                    style={{
+                      width: `${timerProgress}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Scoreboard */}
+              <div className="mb-7 rounded-3xl border border-white/10 bg-white/[0.045] p-4 shadow-2xl backdrop-blur-xl">
+                <div className="flex items-center justify-between">
+                  <Player
+                    name={user1}
+                    fallback="You"
+                    score={score1}
+                    me
+                  />
+
+                  <div className="flex flex-col items-center">
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-white/20">
+                      VS
+                    </span>
+
+                    <div className="mt-1 h-1 w-1 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,.8)]" />
+                  </div>
+
+                  <Player
+                    name={user2}
+                    fallback="Opponent"
+                    score={score2}
+                  />
+                </div>
+              </div>
+
+              {/* Round info */}
+              <div className="mb-7 flex items-center justify-between px-1">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">
+                    Round
+                  </p>
+
+                  <p className="mt-1 text-xl font-black">
+                    {questionNumber}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">
+                    Your score
+                  </p>
+
+                  <p className="mt-1 text-xl font-black text-emerald-400">
+                    {score1}
+                  </p>
+                </div>
+              </div>
+
+              {/* Message */}
+              <div className="mb-7 flex h-8 items-center justify-center">
+                <p
+                  className={`text-sm font-medium ${
+                    phase === "SUBMITTING"
+                      ? "text-emerald-400"
+                      : phase === "SHOWING"
+                        ? "text-emerald-300"
+                        : "text-white/50"
+                  }`}
+                >
+                  {isIntro
+                    ? "Get ready..."
+                    : message}
+                </p>
+              </div>
+
+              {/* Grid */}
+              <div className="relative mb-8 flex min-h-[330px] items-center justify-center">
+                <div
+                  className={`grid gap-2 sm:gap-3 ${
+                    isIntro
+                      ? "invisible"
+                      : ""
+                  }`}
+                  style={{
+                    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {cells.map(
+                    (_, index) => (
+                      <Cell
+                        key={index}
+                        index={index}
+                        flipped={
+                          flipped[index]
+                        }
+                        backClass={
+                          backClasses[
+                            index
+                          ]
+                        }
+                        delay={
+                          reveal
+                            ? index * 30
+                            : 0
+                        }
+                        clickable={
+                          phase ===
+                          "PLAYING"
+                        }
+                        instant={reveal}
+                        onClick={
+                          handleCellClick
+                        }
+                      />
+                    ),
+                  )}
+                </div>
+
+                {/* Intro overlay */}
                 {isIntro && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <h1 className="text-6xl font-bold">Question {questionNumber}</h1>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <div className="mb-3 text-xs font-bold uppercase tracking-[0.35em] text-emerald-400">
+                      Get ready
+                    </div>
+
+                    <h2 className="text-5xl font-black tracking-tight sm:text-6xl">
+                      Round{" "}
+                      {questionNumber}
+                    </h2>
                   </div>
                 )}
               </div>
+
+              {/* Bottom instruction */}
+              {phase === "PLAYING" && (
+                <div className="mx-auto max-w-sm rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
+                  <p className="text-xs text-white/30">
+                    Tap every green box you
+                    remember
+                  </p>
+                </div>
+              )}
+
+              {phase === "SUBMITTING" && (
+                <div className="flex justify-center">
+                  <div className="flex items-center gap-2 rounded-full bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-400">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                    Checking your answer...
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
       ) : (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-8 shadow-2xl">
-            <h1 className="text-center text-5xl font-black">{result}</h1>
+        /* ---------------------------------------------------------------- */
+        /* Result screen                                                     */
+        /* ---------------------------------------------------------------- */
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#05070b]/90 px-4 backdrop-blur-md">
+          <div className="relative w-full max-w-md overflow-hidden rounded-[32px] border border-white/10 bg-[#0c1018] p-7 shadow-2xl sm:p-9">
+            {/* Glow */}
+            <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-emerald-400/10 blur-[70px]" />
 
-            <div className="mt-10 flex items-center">
-              <div className="flex flex-1 flex-col items-start">
-                <p className="text-5xl font-black">{score1}</p>
-                <p className="mt-2 text-lg text-zinc-400">{user1 || "You"}</p>
+            <div className="relative">
+              {/* Trophy */}
+              <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05] text-3xl">
+                {result === "WINNER"
+                  ? "🏆"
+                  : result === "DRAW"
+                    ? "🤝"
+                    : "🧠"}
               </div>
 
-              <div className="mx-6 h-20 w-px bg-white/20" />
+              <p className="text-center text-[10px] font-bold uppercase tracking-[0.35em] text-white/30">
+                Game complete
+              </p>
 
-              <div className="flex flex-1 flex-col items-end">
-                <p className="text-5xl font-black">{score2}</p>
-                <p className="mt-2 text-lg text-zinc-400">{user2 || "Opponent"}</p>
+              <h1
+                className={`mt-2 text-center text-4xl font-black tracking-tight ${
+                  result === "WINNER"
+                    ? "text-emerald-400"
+                    : result === "LOST"
+                      ? "text-red-400"
+                      : "text-amber-400"
+                }`}
+              >
+                {result}
+              </h1>
+
+              {/* Scores */}
+              <div className="mt-10 flex items-center">
+                <div className="flex flex-1 flex-col items-center">
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white text-sm font-black text-slate-950">
+                    {user1
+                      ? user1
+                          .slice(0, 2)
+                          .toUpperCase()
+                      : "YO"}
+                  </div>
+
+                  <p className="text-5xl font-black tabular-nums">
+                    {score1}
+                  </p>
+
+                  <p className="mt-2 max-w-[120px] truncate text-sm text-white/40">
+                    {user1 || "You"}
+                  </p>
+                </div>
+
+                <div className="mx-4 flex flex-col items-center">
+                  <div className="h-12 w-px bg-white/10" />
+
+                  <span className="my-2 text-[10px] font-black text-white/20">
+                    VS
+                  </span>
+
+                  <div className="h-12 w-px bg-white/10" />
+                </div>
+
+                <div className="flex flex-1 flex-col items-center">
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-black">
+                    {user2
+                      ? user2
+                          .slice(0, 2)
+                          .toUpperCase()
+                      : "OP"}
+                  </div>
+
+                  <p className="text-5xl font-black tabular-nums">
+                    {score2}
+                  </p>
+
+                  <p className="mt-2 max-w-[120px] truncate text-sm text-white/40">
+                    {user2 || "Opponent"}
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <p className="mt-8 text-center text-sm text-zinc-500">Final score</p>
-            <div className="mt-6 flex justify-center">
-              <button className={btn} onClick={leave}>
+              {/* Result line */}
+              <div className="mt-8 rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
+                <p className="text-xs text-white/30">
+                  Final score
+                </p>
+
+                <p className="mt-1 text-sm font-semibold text-white/70">
+                  {score1 === score2
+                    ? "A perfectly matched game."
+                    : score1 > score2
+                      ? "Great memory. You came out on top!"
+                      : "Good game. Give it another shot!"}
+                </p>
+              </div>
+
+              <button
+                className="mt-6 w-full rounded-2xl bg-emerald-400 px-5 py-4 font-bold text-slate-950 shadow-lg shadow-emerald-400/10 transition hover:bg-emerald-300 active:scale-[0.98]"
+                onClick={leave}
+              >
                 Back to lobby
               </button>
             </div>

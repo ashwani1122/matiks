@@ -9,7 +9,8 @@ dist
 # code coverage
 coverage
 *.lcov
-
+prisma/migrations
+generated
 # logs
 logs
 _.log

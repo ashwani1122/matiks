@@ -3,7 +3,7 @@ import { registerSchema, zodErrorFormatter , loginSchema  } from "@repo/common/c
 import { prisma } from "@repo/prisma/client";
 import bcrypt, { hash } from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { auth } from "./middleware.route.ts";
+import { auth } from "../middleware/middleware.route.ts";
 export const authRoute = Router()
 
 
@@ -78,10 +78,14 @@ authRoute.post("/login", async (req: Request, res: Response) => {
         console.log("token "+token)
         return res.status(200).json({
             message: "Login successful",
-            data: {
+                data: {
                 token,
-                user
-            },
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    username: user.username,
+                },
+                }
         });
     } catch (error) {
         console.error(error);
