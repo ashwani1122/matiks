@@ -49,7 +49,7 @@ const WS_URL =
   process.env.NEXT_PUBLIC_MATH_WS_URL ?? "ws://localhost:8080";
 
 const HTTP_URL =
-  process.env.NEXT_PUBLIC_HTTP_URL ?? "http://localhost:4000/api/vi";
+  process.env.NEXT_PUBLIC_HTTP_URL ?? "http://localhost:4000";
 
 export default function Page() {
   const router = useRouter();
@@ -131,19 +131,18 @@ export default function Page() {
 
       setLeaderboard(
         players.map(
-          (
-            player: {
-              user: {
-                id: string;
-                username: string;
-              };
-              totalScore: number;
-            },
-            index: number
-          ) => ({
+          (player: Omit<LeaderboardUser, "rank">, index: number) => ({
             rank: index + 1,
-            name: player.user.username,
-            score: player.totalScore,
+            user: {
+              id: player.user?.id ?? `player-${index}`,
+              username: player.user?.username ?? "Unknown player",
+            },
+            rating: Number(player.rating ?? 1000),
+            gamesPlayed: Number(player.gamesPlayed ?? 0),
+            wins: Number(player.wins ?? 0),
+            losses: Number(player.losses ?? 0),
+            totalScore: Number(player.totalScore ?? 0),
+            correctAnswers: Number(player.correctAnswers ?? 0),
           })
         )
       );
@@ -175,20 +174,15 @@ export default function Page() {
         <div className="absolute bottom-[-200px] left-[30%] h-[500px] w-[500px] rounded-full bg-blue-500/5 blur-3xl" />
       </div>
 
-      <div className="relative mx-auto min-h-screen w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-10">
+      <div className="relative mx-auto min-h-screen w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-10 ">
         {/* Hero */}
-        <section className="mx-auto max-w-3xl pb-12 pt-20 text-center sm:pt-28">
-          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 backdrop-blur">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-            Real-time multiplayer games
-          </div>
-
-          <h1 className="text-5xl font-black tracking-[-0.04em] sm:text-6xl lg:text-7xl">
+        <section className="mx-auto max-w-3xl pb-12 text-center">
+          <h1 className="text-4xl font-bold tracking-wide leading-tight antialiased sm:text-7xl lg:text-8xl">
             Think fast.
             <br />
 
-            <span className="bg-gradient-to-r from-amber-300 via-white to-emerald-300 bg-clip-text text-transparent">
-              Play faster.
+            <span className="bg-gradient-to-r  from-amber-300 via-white to-emerald-300 bg-clip-text text-transparent">
+              Play faster
             </span>
           </h1>
 
@@ -207,9 +201,6 @@ export default function Page() {
                   Players online
                 </p>
 
-                <p className="text-xs text-slate-500">
-                  Jump into a game and compete
-                </p>
               </div>
 
               <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-400">
@@ -244,159 +235,10 @@ export default function Page() {
         )}
 
         {/* Leaderboard */}
-        <section className="mb-12">
-          <div className="mb-5 flex items-end justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-widest text-slate-500">
-                Top players
-              </p>
-
-              <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
-                Leaderboard
-              </h2>
-            </div>
-
-            <span className="hidden text-sm text-slate-500 sm:block">
-              All-time scores
-            </span>
-          </div>
-
-          <div className="overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03] shadow-2xl">
-            {leaderboardLoading ? (
-              <div className="flex min-h-[180px] items-center justify-center">
-                <div className="flex items-center gap-3 text-sm text-slate-500">
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/10 border-t-white/70" />
-                  Loading leaderboard...
-                </div>
-              </div>
-            ) : leaderboard.length === 0 ? (
-              <div className="flex min-h-[180px] items-center justify-center px-6 text-center">
-                <div>
-                  <p className="text-sm font-semibold text-slate-300">
-                    No scores yet
-                  </p>
-
-                  <p className="mt-1 text-xs text-slate-500">
-                    Be the first player on the leaderboard.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="divide-y divide-white/5">
-                {leaderboard.slice(0, 10).map((player) => (
-                  <div
-                    key={player.user.id}
-                    className="px-5 py-5 transition hover:bg-white/[0.04] sm:px-6"
-                  >
-                    {/* Main row */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        {/* Rank */}
-                        <div className="flex h-10 w-10 items-center justify-center">
-                          {player.rank === 1 ? (
-                            <span className="text-2xl">🥇</span>
-                          ) : player.rank === 2 ? (
-                            <span className="text-2xl">🥈</span>
-                          ) : player.rank === 3 ? (
-                            <span className="text-2xl">🥉</span>
-                          ) : (
-                            <span className="text-sm font-bold text-slate-500">
-                              #{player.rank}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Avatar */}
-                        <div className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-blue-500 to-violet-600 text-xs font-black">
-                          {player?.user?.username
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </div>
-
-                        {/* User */}
-                        <div>
-                          <p className="text-sm font-bold text-white">
-                            {player.user.username}
-                          </p>
-
-                          <p className="text-xs text-slate-500">
-                            Rating {player.rating}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Total score */}
-                      <div className="text-right">
-                        <p className="text-lg font-black text-white">
-                          {player.totalScore.toLocaleString()}
-                        </p>
-
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                          points
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Player stats */}
-                    <div className="mt-4 grid grid-cols-4 gap-2">
-                      {/* Games */}
-                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                          Games
-                        </p>
-
-                        <p className="mt-1 text-sm font-bold text-white">
-                          {player.gamesPlayed}
-                        </p>
-                      </div>
-
-                      {/* Wins */}
-                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                          Wins
-                        </p>
-
-                        <p className="mt-1 text-sm font-bold text-emerald-400">
-                          {player.wins}
-                        </p>
-                      </div>
-
-                      {/* Losses */}
-                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                          Losses
-                        </p>
-
-                        <p className="mt-1 text-sm font-bold text-red-400">
-                          {player.losses}
-                        </p>
-                      </div>
-
-                      {/* Correct answers */}
-                      <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                          Correct
-                        </p>
-
-                        <p className="mt-1 text-sm font-bold text-amber-400">
-                          {player.correctAnswers}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
         {/* Games */}
         <section>
-          <div className="mb-5 flex items-end justify-between">
+          <div className="mb-5 flex items-end justify-around">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-widest text-slate-500">
-                Game room
-              </p>
 
               <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
                 Choose your battle
@@ -423,7 +265,7 @@ export default function Page() {
                 <img
                   src={game.image}
                   alt=""
-                  className="absolute inset-0 h-full w-full object-cover transition duration-700 group-hover:scale-105"
+                  className="transition h-120 w-full duration-700 group-hover:scale-105"
                 />
 
                 {/* Dark overlay */}
@@ -451,9 +293,9 @@ export default function Page() {
 
                   <div className="mt-5 flex items-center justify-between">
                     <span
-                      className={`rounded-xl bg-gradient-to-r ${game.accent} px-5 py-2.5 text-sm font-black text-black shadow-lg transition group-hover:scale-105`}
+                      className={`rounded-xl bg-gradient-to-r ${game.accent} px-5 py-2.5 text-sm font-black text-black shadow-lg transition group-hover:scale-105 cursor-pointer active:scale-85`}
                     >
-                      {signedIn ? "Play now →" : "Sign in to play"}
+                      {signedIn ? "Play now " : "Sign in to play"}
                     </span>
 
                     <span className="text-sm font-semibold text-white/60 transition group-hover:text-white">
@@ -473,7 +315,7 @@ export default function Page() {
         <footer id="how-to-play" className="pb-10 pt-12 text-center">
           <HowToPlay />
 
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-600 mt-10">
             Fast games · Real-time competition · Built for your brain
           </p>
         </footer>

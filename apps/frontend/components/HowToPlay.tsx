@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 
 const games = [
   {
@@ -82,11 +81,11 @@ export default function HowToPlay() {
                 <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04] p-2 shadow-2xl shadow-black/30">
                   <div className="relative aspect-[16/10] overflow-hidden rounded-2xl bg-black">
                     
-                    <img src={game.image} alt="games" />
+                    <img  src={game.image} alt="games" />
                     {/* Image overlay */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 
-                    <div className="absolute bottom-4 left-4 rounded-full border border-white/10 bg-black/50 px-3 py-1.5 text-xs font-bold text-white backdrop-blur-md">
+                    <div className=" rounded-full border border-white/10 bg-black/50 px-3 py-1.5 text-xs font-bold text-white backdrop-blur-md">
                       {game.title}
                     </div>
                   </div>
@@ -99,7 +98,7 @@ export default function HowToPlay() {
                   {game.number}
                 </div>
 
-                <h3 className="text-3xl font-black tracking-tight sm:text-4xl">
+                <h3 className="text-3xl  font-black tracking-tight sm:text-4xl">
                   {game.title}
                 </h3>
 
@@ -126,29 +125,6 @@ export default function HowToPlay() {
               </div>
             </div>
           ))}
-        </div>
-
-        {/* Bottom CTA */}
-        <div className="mt-24 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] p-8 text-center sm:p-12">
-          <div className="mx-auto max-w-xl">
-            <div className="mb-4 text-3xl">⚡</div>
-
-            <h3 className="text-2xl font-black sm:text-3xl">
-              Ready to test yourself?
-            </h3>
-
-            <p className="mt-3 text-sm leading-6 text-slate-500">
-              Choose your game, find an opponent, and see who
-              can think faster.
-            </p>
-
-            <a
-              href="#games"
-              className="mt-7 inline-flex rounded-xl bg-amber-400 px-6 py-3.5 text-sm font-black text-black shadow-lg shadow-amber-400/10 transition hover:-translate-y-0.5 hover:bg-amber-300"
-            >
-              Play Now →
-            </a>
-          </div>
         </div>
       </div>
     </section>

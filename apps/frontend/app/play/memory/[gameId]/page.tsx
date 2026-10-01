@@ -57,17 +57,17 @@ const Cell = memo(function Cell({
   index,
   flipped,
   backClass,
-  delay,
   clickable,
-  instant,
+  showingPattern,
+  isPatternOn,
   onClick,
 }: {
   index: number;
   flipped: boolean;
   backClass: string;
-  delay: number;
   clickable: boolean;
-  instant: boolean;
+  showingPattern: boolean;
+  isPatternOn: boolean;
   onClick: (index: number) => void;
 }) {
   const face: React.CSSProperties = {
@@ -91,22 +91,31 @@ const Cell = memo(function Cell({
         }`}
         style={{
           transformStyle: "preserve-3d",
-          transition: instant
+          transition: showingPattern
             ? "none"
             : "transform 450ms cubic-bezier(.2,.8,.2,1)",
-          transitionDelay: instant ? "0ms" : `${delay}ms`,
-          transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
+          transform:
+            flipped && !showingPattern
+              ? "rotateY(180deg)"
+              : "rotateY(0deg)",
         }}
       >
-        {/* Hidden side */}
+        {/* Front / hidden side.
+            During the initial pattern reveal, green is shown directly
+            on this face. There is no initial flip animation. */}
         <span
-          className="absolute inset-0 rounded-2xl border border-white/10 bg-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,.08)]"
+          className={`absolute inset-0 rounded-2xl border border-white/10 ${
+            showingPattern && isPatternOn
+              ? "bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-lg"
+              : "bg-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,.08)]"
+          }`}
           style={face}
         >
           <span className="absolute inset-[6px] rounded-xl border border-white/[0.06]" />
         </span>
 
-        {/* Revealed side */}
+        {/* Back / revealed side.
+            This is used after the player clicks a box. */}
         <span
           className={`absolute inset-0 rounded-2xl ${backClass} shadow-lg`}
           style={{
@@ -195,6 +204,7 @@ export default function MemoryGamePage() {
 
   const [questionNumber, setQuestionNumber] = useState(1);
   const [timer, setTimer] = useState(60);
+  const [gameDuration, setGameDuration] = useState<number | null>(null);
 
   const [end, setEnd] = useState(false);
   const [message, setMessage] = useState("Connecting...");
@@ -451,6 +461,10 @@ export default function MemoryGamePage() {
           setUser1(me?.name ?? "");
           setUser2(other?.name ?? "");
 
+          // The server sends the current scores with QUESTION.
+          setScore1(me?.score ?? 0);
+          setScore2(other?.score ?? 0);
+
           gameIdRef.current =
             runningGameId;
 
@@ -474,8 +488,16 @@ export default function MemoryGamePage() {
 
               if (remaining <= 0) {
                 clearCountdown();
-                setEnd(true);
-                setPhase("COMPLETED");
+                setTimer(0);
+
+                // The server is authoritative for the final result.
+                // Wait for GAME_OVER so persisted/final scores are shown.
+                setPhase((current) =>
+                  current === "COMPLETED"
+                    ? current
+                    : "SUBMITTING",
+                );
+                setMessage("Time's up. Waiting for final result...");
               }
             }, 250);
 
@@ -506,6 +528,8 @@ export default function MemoryGamePage() {
             ),
           );
 
+          setReveal(false);
+
           setQuestionNumber(
             (n) => n + 1,
           );
@@ -529,21 +553,68 @@ export default function MemoryGamePage() {
           break;
         }
 
-        case "TIME_UP": {
-          clearCountdown();
+        case "GAME_COMPLETED": {
+          clearGameTimer();
 
-          setTimer(0);
-          setEnd(true);
-          setPhase("COMPLETED");
+          // This means THIS player finished all questions.
+          // The match itself is not necessarily over yet.
+          setPhase("SUBMITTING");
+          setMessage("You finished! Waiting for the final result...");
 
           break;
         }
 
-        case "GAME_COMPLETED": {
+        case "GAME_OVER": {
           clearGameTimer();
+          clearCountdown();
 
+          const players =
+            data.payload?.players ?? [];
+
+          const me = players.find(
+            (player: any) =>
+              player.id === storedUser?.id,
+          );
+
+          const opponent = players.find(
+            (player: any) =>
+              player.id !== storedUser?.id,
+          );
+
+          if (me) {
+            setUser1(me.name ?? "");
+            setScore1(me.score ?? 0);
+          }
+
+          if (opponent) {
+            setUser2(opponent.name ?? "");
+            setScore2(opponent.score ?? 0);
+          }
+
+          if (
+            typeof data.payload?.durationSeconds ===
+            "number"
+          ) {
+            setGameDuration(
+              data.payload.durationSeconds,
+            );
+          }
+
+          setTimer(0);
+          setEnd(true);
           setPhase("COMPLETED");
-          setMessage("Game completed!");
+          setMessage("Game over.");
+
+          break;
+        }
+
+        case "TIME_UP": {
+          // Backward compatibility with an older WS server.
+          clearCountdown();
+
+          setTimer(0);
+          setPhase("SUBMITTING");
+          setMessage("Time's up. Waiting for final result...");
 
           break;
         }
@@ -748,15 +819,14 @@ export default function MemoryGamePage() {
   /* Derived values                                                         */
   /* ---------------------------------------------------------------------- */
 
+  // Only clicked cells flip.
+  // The initial green pattern is rendered directly on the front face.
   const flipped = useMemo(
     () =>
       cells.map(
-        (state, i) =>
-          state !== "normal" ||
-          (reveal &&
-            flatPattern[i] === "on"),
+        (state) => state !== "normal",
       ),
-    [cells, reveal, flatPattern],
+    [cells],
   );
 
   const backClasses = useMemo(
@@ -809,23 +879,8 @@ export default function MemoryGamePage() {
       {!end ? (
         <div className="relative mx-auto w-full max-w-2xl px-4 pb-10 pt-6 sm:pt-10">
           {/* Header */}
-          <header className="mb-6 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] shadow-xl">
-                <span className="text-xl">🧠</span>
-              </div>
-
-              <div>
-                <h1 className="text-lg font-black tracking-tight sm:text-xl">
-                  Memory Grid
-                </h1>
-
-                <p className="text-xs text-white/40">
-                  Remember. React. Win.
-                </p>
-              </div>
-            </div>
-
+          <header className="mb-6 flex items-center justify-end">
+           
             <button
               onClick={leave}
               className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-white/70 transition hover:bg-white/[0.08] hover:text-white"
@@ -1045,16 +1100,17 @@ export default function MemoryGamePage() {
                             index
                           ]
                         }
-                        delay={
-                          reveal
-                            ? index * 30
-                            : 0
-                        }
                         clickable={
                           phase ===
                           "PLAYING"
                         }
-                        instant={reveal}
+                        showingPattern={
+                          phase === "SHOWING" &&
+                          reveal
+                        }
+                        isPatternOn={
+                          flatPattern[index] === "on"
+                        }
                         onClick={
                           handleCellClick
                         }
@@ -1079,14 +1135,14 @@ export default function MemoryGamePage() {
               </div>
 
               {/* Bottom instruction */}
-              {phase === "PLAYING" && (
+              {/* {phase === "PLAYING" && (
                 <div className="mx-auto max-w-sm rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
                   <p className="text-xs text-white/30">
                     Tap every green box you
                     remember
                   </p>
                 </div>
-              )}
+              )} */}
 
               {phase === "SUBMITTING" && (
                 <div className="flex justify-center">
@@ -1184,9 +1240,35 @@ export default function MemoryGamePage() {
               </div>
 
               {/* Result line */}
-              <div className="mt-8 rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
+              <div className="mt-8 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">
+                    Final score
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white/70">
+                    {score1} - {score2}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">
+                    Time played
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white/70">
+                    {gameDuration !== null
+                      ? `${Math.floor(gameDuration / 60)}m ${
+                          gameDuration % 60
+                        }s`
+                      : "—"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-white/5 bg-white/[0.025] px-4 py-3 text-center">
                 <p className="text-xs text-white/30">
-                  Final score
+                  Match result
                 </p>
 
                 <p className="mt-1 text-sm font-semibold text-white/70">

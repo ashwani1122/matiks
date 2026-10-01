@@ -894,18 +894,7 @@ export default function MathGamePage() {
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 py-5 sm:px-6 sm:py-8">
         {/* Header */}
-        <header className="mb-6 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 font-black text-black shadow-lg shadow-amber-400/20">
-                M
-              </div>
-
-              <span className="font-black tracking-tight">
-                Matiks
-              </span>
-            </div>
-          </div>
+        <header className="mb-6 flex items-center justify-end">
 
           <button
             onClick={leave}
@@ -939,9 +928,9 @@ export default function MathGamePage() {
               <div className="relative mx-auto mb-8 flex h-28 w-28 items-center justify-center">
                 <div className="absolute inset-0 animate-ping rounded-full bg-amber-400/10" />
 
-                <div className="absolute inset-3 rounded-full border border-amber-400/20" />
+                <div className="absolute inset-3 " />
 
-                <div className="relative flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-300 to-orange-500 text-4xl shadow-2xl shadow-amber-500/20">
+                <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-orange-500 text-4xl shadow-2xl shadow-amber-500/20">
                   ⚔️
                 </div>
               </div>
